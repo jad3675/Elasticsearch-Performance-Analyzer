@@ -1676,112 +1676,127 @@ class ElasticsearchAnalyzer:
                 tab_contents.append(f'''
                     <div class="tab-content{' active' if key == 'overview' else ''}"
                          id="tab-{key}">
-                        {section_content}
+                        <div class="tab-content-inner">{section_content}</div>
                     </div>
                 ''')
         
         return '\n'.join(tab_contents)
     
     def _process_section_content(self, content_lines):
-        """Process content lines and return formatted HTML"""
-        # Remove first line (section header) and any empty lines
-        content_lines = [line for line in content_lines[1:] if line.strip()]
+        """Process content lines and return formatted HTML by grouping content into blocks."""
+        content_lines = [line.strip() for line in content_lines[1:] if line.strip()]
         
-        # Organize content by type
-        metrics = []
-        warnings = []
-        successes = []
-        tables = []
-        other_lines = []
-        
-        table_lines = []
-        in_table = False
-        
+        blocks = []
+        current_block_type = None
+        current_block_lines = []
+
+        # First pass: Group lines into logical blocks (table, metric, text, etc.)
         for line in content_lines:
-            line = line.strip()
+            line_type = 'other'
+            is_table_line = '|' in line or '-+-' in line
             
-            # Handle table collection
-            if '|' in line or '-+-' in line:
-                in_table = True
-                table_lines.append(line)
-                continue
-            elif in_table:
-                in_table = False
-                if table_lines:
-                    tables.append(self._convert_table_to_html(table_lines))
-                    table_lines = []
-                    
-            # Handle other content types
-            if any(i in line for i in ['📊', '📈', '🔥', '💡', '⚡']):
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    icon = next((i for i in ['📊', '📈', '🔥', '💡', '⚡'] if i in parts[0]), '')
-                    label = parts[0].replace(icon, '').strip()
-                    value = parts[1].strip()
-                    metrics.append(f'''
-                        <div class="metric-card">
-                            <div class="metric-icon">{icon}</div>
-                            <div class="metric-value">{value}</div>
-                            <div class="metric-label">{label}</div>
-                        </div>
-                    ''')
+            if is_table_line:
+                line_type = 'table'
+            elif any(i in line for i in ['📊', '📈', '🔥', '💡', '⚡']):
+                line_type = 'metric'
             elif '⚠️' in line:
-                warnings.append(f'<div class="warning">{line}</div>')
+                line_type = 'warning'
             elif '✅' in line:
-                successes.append(f'<div class="success">{line}</div>')
-            else:
-                other_lines.append(f'<div class="content-line">{line}</div>')
-        
-        # Build final HTML
+                line_type = 'success'
+
+            # If line type changes, save previous block and start a new one
+            if line_type != current_block_type and current_block_lines:
+                blocks.append({'type': current_block_type, 'lines': current_block_lines})
+                current_block_lines = []
+            
+            current_block_type = line_type
+            current_block_lines.append(line)
+
+        # Append the last remaining block
+        if current_block_lines:
+            blocks.append({'type': current_block_type, 'lines': current_block_lines})
+            
+        return self._render_html_parts(blocks)
+
+    def _render_html_parts(self, blocks):
+        """Render a list of content blocks to HTML."""
         html_parts = []
         
-        # Add metrics grid
-        if metrics:
-            html_parts.append('<div class="metric-grid">')
-            html_parts.extend(metrics)
-            html_parts.append('</div>')
-        
-        # Add alerts sections
-        if warnings:
-            html_parts.append('<div class="alerts-section">')
-            html_parts.extend(warnings)
-            html_parts.append('</div>')
-        
-        if successes:
-            html_parts.append('<div class="alerts-section">')
-            html_parts.extend(successes)
-            html_parts.append('</div>')
-        
-        # Add tables
-        if tables:
-            html_parts.extend(tables)
-        
-        # Add remaining content
-        if other_lines:
-            html_parts.append('<div class="content-section">')
-            html_parts.extend(other_lines)
-            html_parts.append('</div>')
-        
+        for block in blocks:
+            block_type = block['type']
+            lines = block['lines']
+            
+            if block_type == 'table':
+                html_parts.append(self._convert_table_to_html(lines))
+            
+            elif block_type == 'metric':
+                html_parts.append('<div class="metric-grid">')
+                for line in lines:
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        icon = next((i for i in ['📊', '📈', '🔥', '💡', '⚡'] if i in parts[0]), '')
+                        label = parts[0].replace(icon, '').strip()
+                        value = parts[1].strip()
+                        html_parts.append(f'''
+                            <div class="metric-card">
+                                <div class="metric-icon">{icon}</div>
+                                <div class="metric-value">{value}</div>
+                                <div class="metric-label">{label}</div>
+                            </div>
+                        ''')
+                html_parts.append('</div>')
+
+            elif block_type == 'warning':
+                html_parts.append('<div class="alerts-section">')
+                for line in lines:
+                    html_parts.append(f'<div class="warning">{line}</div>')
+                html_parts.append('</div>')
+            
+            elif block_type == 'success':
+                html_parts.append('<div class="alerts-section">')
+                for line in lines:
+                    html_parts.append(f'<div class="success">{line}</div>')
+                html_parts.append('</div>')
+
+            elif block_type == 'other':
+                html_parts.append('<div class="content-section">')
+                for line in lines:
+                    # Heuristic to detect sub-headings vs plain text
+                    if line.endswith(':') and len(line) < 60 and not any(c.isdigit() for c in line):
+                         html_parts.append(f'<h4 class="content-subheading">{line}</h4>')
+                    else:
+                         html_parts.append(f'<div class="content-line">{line}</div>')
+                html_parts.append('</div>')
+
         return '\n'.join(html_parts)
-        
+
     def _convert_table_to_html(self, table_lines):
-        """Convert ASCII table to HTML table"""
-        html_lines = ['<div class="table-container"><table>']
+        """Convert ASCII table to HTML table, handling optional title."""
+        html_lines = ['<div class="table-container">']
+        
+        # Check for a title line (does not contain '|' or '-+-')
+        first_line = table_lines[0].strip()
+        if '|' not in first_line and '-+-' not in first_line:
+            html_lines.append(f'<h3 class="table-title">{first_line}</h3>')
+            table_lines = table_lines[1:]
+
+        html_lines.append('<table>')
         header_done = False
         
         for line in table_lines:
-            if '-+-' in line:  # Skip separator lines
+            if '-+-' in line:
                 continue
             
-            if not header_done and '|' in line:
-                cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+            # Split by '|' but keep empty strings for empty cells
+            cells = [cell.strip() for cell in line.split('|')]
+            
+            if not header_done:
                 html_lines.append('<thead><tr>')
                 for cell in cells:
                     html_lines.append(f'<th>{cell}</th>')
                 html_lines.append('</tr></thead><tbody>')
                 header_done = True
-            elif '|' in line:
-                cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+            else:
                 html_lines.append('<tr>')
                 for cell in cells:
                     html_lines.append(f'<td>{cell}</td>')
@@ -1910,6 +1925,20 @@ class ElasticsearchAnalyzer:
                 
                 .tab-content-inner {{
                     padding: 24px;
+                }}
+                
+                .table-title {{
+                    font-size: 18px;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                    padding: 0 10px;
+                }}
+                .content-subheading {{
+                    font-weight: 600;
+                    font-size: 14px;
+                    margin-top: 16px;
+                    margin-bottom: 8px;
+                    color: #475569;
                 }}
 
                 .table-container {{
