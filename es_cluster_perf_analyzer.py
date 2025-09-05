@@ -595,13 +595,19 @@ class ElasticsearchAnalyzer:
             # 4. Memory and GC Analysis
             self._analyze_memory_and_gc()
             
-            # 5. Search Performance Analysis
+            # 5. Circuit Breaker Analysis
+            self._analyze_circuit_breakers()
+            
+            # 6. Search Performance Analysis
             self._analyze_search_performance()
             
-            # 6. I/O Performance Analysis
+            # 7. I/O Performance Analysis
             self._analyze_io_performance()
             
-            # 7. Index Operations Analysis
+            # 8. Network Traffic Analysis
+            self._analyze_network_traffic()
+            
+            # 9. Index Operations Analysis
             self._analyze_index_operations()
             
             # 8. Segments and Allocation Analysis
@@ -1047,11 +1053,10 @@ class ElasticsearchAnalyzer:
         self.update_results("💾 I/O & DISK PERFORMANCE ANALYSIS:\n\n")
         
         try:
-            # Get file system and transport stats
-            fs_stats = self.es.nodes.stats(metric=['fs', 'transport'])
+            # Get file system stats
+            fs_stats = self.es.nodes.stats(metric=['fs'])
             
             disk_table_rows = []
-            network_table_rows = []
             
             total_disk_stats = {
                 'total_reads': 0,
@@ -1115,38 +1120,12 @@ class ElasticsearchAnalyzer:
                 if available_space_gb < 10:  # Less than 10GB free
                     self.update_results(f"   ⚠️  Low disk space on {node_name}: {available_space_gb:.1f}GB remaining\n")
                 
-                # Network transport analysis
-                transport = node_data.get('transport', {})
-                
-                rx_count = transport.get('rx_count', 0)
-                tx_count = transport.get('tx_count', 0)
-                rx_size_mb = transport.get('rx_size_in_bytes', 0) / (1024 * 1024)
-                tx_size_mb = transport.get('tx_size_in_bytes', 0) / (1024 * 1024)
-                server_open = transport.get('server_open', 0)
-                
-                network_table_rows.append([
-                    node_name,
-                    f"{rx_count:,}",
-                    f"{tx_count:,}",
-                    f"{rx_size_mb:.1f}MB",
-                    f"{tx_size_mb:.1f}MB",
-                    str(server_open)
-                ])
-            
             # Display disk performance table
             disk_headers = ['Node', 'Total Space', 'Used Space', 'Usage %', 'Read Ops', 'Write Ops', 'Read Data', 'Write Data']
             self.update_results(self._format_table(
                 headers=disk_headers,
                 rows=disk_table_rows,
                 title="Disk Usage and I/O Performance"
-            ))
-            
-            # Display network performance table
-            network_headers = ['Node', 'RX Count', 'TX Count', 'RX Data', 'TX Data', 'Connections']
-            self.update_results(self._format_table(
-                headers=network_headers,
-                rows=network_table_rows,
-                title="Network Transport Performance"
             ))
             
             # I/O and disk summary
@@ -1689,8 +1668,10 @@ class ElasticsearchAnalyzer:
             'node': {'title': 'Node Resources', 'content': []},
             'threads': {'title': 'Thread Pools', 'content': []},
             'memory': {'title': 'Memory & GC', 'content': []},
+            'breakers': {'title': 'Circuit Breakers', 'content': []},
             'search': {'title': 'Search & Cache', 'content': []},
             'io': {'title': 'I/O & Disk', 'content': []},
+            'network': {'title': 'Network Traffic', 'content': []},
             'indexing': {'title': 'Index Operations', 'content': []},
             'indexing_delta': {'title': 'Indexing Delta', 'content': []},
             'segments': {'title': 'Segments & Allocation', 'content': []},
@@ -1704,8 +1685,10 @@ class ElasticsearchAnalyzer:
             'node': '📊 NODE RESOURCES',
             'threads': '🧵 COMPREHENSIVE THREAD POOL ANALYSIS',
             'memory': '🧠 MEMORY & GARBAGE COLLECTION ANALYSIS',
+            'breakers': '🛡️ CIRCUIT BREAKER ANALYSIS',
             'search': '🔍 SEARCH PERFORMANCE & CACHE ANALYSIS',
             'io': '💾 I/O & DISK PERFORMANCE ANALYSIS',
+            'network': '🌐 NETWORK TRAFFIC ANALYSIS',
             'indexing': '📝 INDEX OPERATIONS ANALYSIS',
             'indexing_delta': '📝 CURRENT INDEXING ACTIVITY (DELTA CHECK)',
             'segments': '🔧 SEGMENTS & ALLOCATION ANALYSIS',
@@ -1749,7 +1732,7 @@ class ElasticsearchAnalyzer:
     def _generate_tabs(self, sections):
         """Generate HTML for navigation tabs"""
         # Define tab order
-        tab_order = ['overview', 'pipeline', 'node', 'threads', 'memory', 'search', 'io', 'indexing', 'indexing_delta', 'segments', 'hotthreads', 'shards']
+        tab_order = ['overview', 'pipeline', 'node', 'threads', 'memory', 'breakers', 'search', 'io', 'network', 'indexing', 'indexing_delta', 'segments', 'hotthreads', 'shards']
         tabs = []
         
         # Generate tabs in specified order, but only for sections that have content
@@ -1767,7 +1750,7 @@ class ElasticsearchAnalyzer:
     def _generate_tab_content(self, sections):
         """Generate HTML content for each tab"""
         # Define tab order
-        tab_order = ['overview', 'pipeline', 'node', 'threads', 'memory', 'search', 'io', 'indexing', 'indexing_delta', 'segments', 'hotthreads', 'shards']
+        tab_order = ['overview', 'pipeline', 'node', 'threads', 'memory', 'breakers', 'search', 'io', 'network', 'indexing', 'indexing_delta', 'segments', 'hotthreads', 'shards']
         tab_contents = []
         
         # Generate content in specified order, but only for sections that have content
@@ -2155,7 +2138,9 @@ class ElasticsearchAnalyzer:
             "🧵": "&#129525;",
             "🔍": "&#128269;",
             "📝": "&#128221;",
-            "🎯": "&#127919;"
+            "🎯": "&#127919;",
+            "🛡️": "&#128737;",
+            "🌐": "&#127760;"
         }
         
         for emoji, html_code in emoji_map.items():
@@ -2237,6 +2222,106 @@ class ElasticsearchAnalyzer:
         self.results_text.delete(1.0, tk.END)
         self.browser_btn.config(state=tk.DISABLED)
         self.export_btn.config(state=tk.DISABLED)
+
+    def _analyze_circuit_breakers(self):
+        """Analyze circuit breaker statistics"""
+        self.update_results("🛡️ CIRCUIT BREAKER ANALYSIS:\n\n")
+        try:
+            breaker_stats = self.es.nodes.stats(metric=['breaker'])
+            
+            table_rows = []
+            total_tripped = 0
+            
+            # Sort nodes by name for consistent ordering
+            sorted_node_ids = sorted(breaker_stats.get('nodes', {}).keys(),
+                                     key=lambda x: breaker_stats['nodes'][x].get('name', ''))
+
+            for node_id in sorted_node_ids:
+                node_data = breaker_stats['nodes'][node_id]
+                node_name = node_data.get('name', 'Unknown')
+                breakers = node_data.get('breakers', {})
+                
+                for breaker_name, stats in breakers.items():
+                    limit_bytes = stats.get('limit_size_in_bytes', 0)
+                    estimated_bytes = stats.get('estimated_size_in_bytes', 0)
+                    tripped_count = stats.get('tripped', 0)
+                    
+                    # Only show breakers with activity or non-zero limits
+                    if limit_bytes > 0 or estimated_bytes > 0 or tripped_count > 0:
+                        usage_percent = (estimated_bytes / limit_bytes * 100) if limit_bytes > 0 else 0
+                        
+                        table_rows.append([
+                            node_name,
+                            breaker_name,
+                            f"{limit_bytes / (1024**2):.1f}MB",
+                            f"{estimated_bytes / (1024**2):.1f}MB",
+                            f"{usage_percent:.1f}%{' ⚠️' if usage_percent > 90 else ''}",
+                            f"{tripped_count}{' 🔥' if tripped_count > 0 else ''}"
+                        ])
+                        
+                        total_tripped += tripped_count
+
+            if table_rows:
+                headers = ['Node', 'Breaker', 'Limit', 'Estimated', 'Usage', 'Tripped']
+                self.update_results(self._format_table(
+                    headers=headers,
+                    rows=table_rows,
+                    title="Circuit Breaker Status by Node"
+                ))
+            
+            self.update_results("   Circuit Breaker Summary:\n")
+            if total_tripped > 0:
+                self.update_results(f"   ⚠️🔥 Total Breaker Trips Detected: {total_tripped}\n")
+                self.update_results("      Investigate immediately! Tripped breakers indicate memory pressure and can cause request failures.\n")
+            else:
+                self.update_results("   ✅ No circuit breaker trips detected. Memory management is stable.\n")
+            self.update_results("\n")
+
+        except Exception as e:
+            self.update_results(f"   ⚠️  Could not retrieve circuit breaker info: {str(e)}\n\n")
+
+    def _analyze_network_traffic(self):
+        """Network transport analysis"""
+        self.update_results("🌐 NETWORK TRAFFIC ANALYSIS:\n\n")
+        try:
+            transport_stats = self.es.nodes.stats(metric=['transport'])
+            network_table_rows = []
+            
+            for node_id, node_data in transport_stats.get('nodes', {}).items():
+                node_name = node_data.get('name', 'Unknown')
+                transport = node_data.get('transport', {})
+                
+                rx_count = transport.get('rx_count', 0)
+                tx_count = transport.get('tx_count', 0)
+                rx_size_mb = transport.get('rx_size_in_bytes', 0) / (1024 * 1024)
+                tx_size_mb = transport.get('tx_size_in_bytes', 0) / (1024 * 1024)
+                server_open = transport.get('server_open', 0)
+                
+                network_table_rows.append([
+                    node_name,
+                    f"{rx_count:,}",
+                    f"{tx_count:,}",
+                    f"{rx_size_mb:.1f}MB",
+                    f"{tx_size_mb:.1f}MB",
+                    str(server_open)
+                ])
+
+            network_headers = ['Node', 'RX Count', 'TX Count', 'RX Data', 'TX Data', 'Connections']
+            self.update_results(self._format_table(
+                headers=network_headers,
+                rows=network_table_rows,
+                title="Network Transport Performance"
+            ))
+            
+            # Summary
+            total_rx_mb = sum(float(row[3][:-2]) for row in network_table_rows if row[3] != "N/A")
+            total_tx_mb = sum(float(row[4][:-2]) for row in network_table_rows if row[4] != "N/A")
+            self.update_results("   Network Summary:\n")
+            self.update_results(f"   📊 Total Data Received (RX): {total_rx_mb:.1f}MB\n")
+            self.update_results(f"   📊 Total Data Sent (TX): {total_tx_mb:.1f}MB\n\n")
+
+        except Exception as e:
+            self.update_results(f"   ⚠️  Could not retrieve network traffic info: {str(e)}\n\n")
 
 def main():
     root = tk.Tk()
