@@ -449,28 +449,11 @@ class ElasticsearchAnalyzer:
                         else:
                             healthy_rows.append(row)
                     
-                    # Show failed pipelines table
-                    if failed_rows:
-                        self.update_results(self._format_table(
-                            headers=['Pipeline', 'Documents', 'Avg Time', 'Failed', 'Failure Rate'],
-                            rows=failed_rows,
-                            title="⚠️  Pipelines with Failures"
-                        ))
-                    
-                    # Show healthy pipelines table
-                    if healthy_rows:
-                        self.update_results(self._format_table(
-                            headers=['Pipeline', 'Documents', 'Avg Time'],
-                            rows=healthy_rows,
-                            title="✅ Healthy Pipelines"
-                        ))
-                    
-                    # Add summary
+                    # Display Summary First
                     total_docs = sum(m['count'] for _, m in sorted_pipelines)
                     total_failed = sum(m['failed'] for _, m in sorted_pipelines)
                     total_time = sum(m['time_ms'] for _, m in sorted_pipelines)
                     avg_time = total_time / total_docs if total_docs > 0 else 0
-                    
                     self.update_results("   Pipeline Summary:\n")
                     self.update_results(f"   📈 Total Active Pipelines: {len(sorted_pipelines)}\n")
                     self.update_results(f"   📈 Total Documents Processed: {total_docs:,}\n")
@@ -478,6 +461,22 @@ class ElasticsearchAnalyzer:
                     if total_failed > 0:
                         self.update_results(f"   ⚠️  Total Failed Operations: {total_failed:,}\n")
                     self.update_results("\n")
+
+                    # Display failed pipelines table after summary
+                    if failed_rows:
+                        self.update_results(self._format_table(
+                            headers=['Pipeline', 'Documents', 'Avg Time', 'Failed', 'Failure Rate'],
+                            rows=failed_rows,
+                            title="⚠️  Pipelines with Failures"
+                        ))
+                    
+                    # Display healthy pipelines table after summary
+                    if healthy_rows:
+                        self.update_results(self._format_table(
+                            headers=['Pipeline', 'Documents', 'Avg Time'],
+                            rows=healthy_rows,
+                            title="✅ Healthy Pipelines"
+                        ))
                 else:
                     self.update_results("   No active pipelines found.\n\n")
             
@@ -562,29 +561,26 @@ class ElasticsearchAnalyzer:
                         load
                     ])
                 
-                # Display the node resources table
-                headers = ['Node Name', 'Roles', 'CPUs', 'Heap Size', 'RAM', 'CPU Usage', 'Load']
-                self.update_results(self._format_table(
-                    headers=headers,
-                    rows=sorted(table_rows, key=lambda x: x[0]),  # Sort by node name
-                    title="Node Resources"
-                ))
-                
-                # Add resource summary
+                # Display Summary First
                 self.update_results("   Resource Summary:\n")
                 self.update_results(f"   📈 Total Cluster vCPUs: {total_cpus}\n")
                 self.update_results(f"   📈 Total Nodes: {len(cat_nodes)}\n")
-                
-                # Calculate and show cluster averages
                 try:
                     avg_cpu = sum(float(node.get('cpu', 0)) for node in cat_nodes) / len(cat_nodes)
                     avg_load = sum(float(node.get('load_1m', 0)) for node in cat_nodes) / len(cat_nodes)
                     self.update_results(f"   📈 Average CPU Usage: {avg_cpu:.1f}%\n")
                     self.update_results(f"   📈 Average Load: {avg_load:.2f}\n")
-                except:
+                except (ValueError, TypeError, ZeroDivisionError):
                     pass
-                
                 self.update_results("\n")
+
+                # Display Details
+                headers = ['Node Name', 'Roles', 'CPUs', 'Heap Size', 'RAM', 'CPU Usage', 'Load']
+                self.update_results(self._format_table(
+                    headers=headers,
+                    rows=sorted(table_rows, key=lambda x: x[0]),
+                    title="Node Resources"
+                ))
                 
             except Exception as e:
                 self.update_results(f"   ⚠️  Could not retrieve node resource info: {str(e)}\n\n")
@@ -693,75 +689,24 @@ class ElasticsearchAnalyzer:
     def _analyze_all_thread_pools(self):
         """Comprehensive thread pool analysis for all pool types"""
         self.update_results("🧵 COMPREHENSIVE THREAD POOL ANALYSIS:\n\n")
-        
         try:
             # Get thread pool data
             thread_pool_cat = self.es.cat.thread_pool(h='node_name,name,active,queue,rejected,size,max', format='json')
             
-            # Thread pools to monitor
-            pool_types = ['search', 'get', 'bulk', 'write', 'management', 'flush', 'refresh', 'merge']
-            
-            overall_totals = {
-                'active': 0,
-                'queue': 0,
-                'rejected': 0,
-                'available': 0
-            }
-            
-            for pool_type in pool_types:
-                pools = [p for p in thread_pool_cat if p.get('name') == pool_type]
-                
-                if pools:
-                    pool_totals = {'active': 0, 'queue': 0, 'rejected': 0, 'available': 0}
-                    table_rows = []
-                    
-                    for pool in pools:
-                        node_name = pool.get('node_name', 'Unknown')
-                        active = int(pool.get('active', 0))
-                        queue = int(pool.get('queue', 0))
-                        size = pool.get('size', 'N/A')
-                        rejected = int(pool.get('rejected', 0))
-                        
-                        pool_totals['active'] += active
-                        pool_totals['queue'] += queue
-                        pool_totals['rejected'] += rejected
-                        
-                        try:
-                            if size and size != 'N/A':
-                                pool_totals['available'] += int(size)
-                        except:
-                            pass
-                        
-                        table_rows.append([node_name, str(active), str(queue), str(size), str(rejected)])
-                    
-                    # Only display pools with activity or issues
-                    if pool_totals['active'] > 0 or pool_totals['queue'] > 0 or pool_totals['rejected'] > 0:
-                        headers = ['Node', 'Active', 'Queue', 'Size', 'Rejected']
-                        self.update_results(self._format_table(
-                            headers=headers,
-                            rows=sorted(table_rows, key=lambda x: x[0]),
-                            title=f"{pool_type.title()} Thread Pool"
-                        ))
-                        
-                        # Pool-specific analysis
-                        if pool_totals['available'] > 0:
-                            utilization = (pool_totals['active'] / pool_totals['available']) * 100
-                            if utilization > 80:
-                                self.update_results(f"   ⚠️  High {pool_type} thread utilization: {utilization:.1f}%\n")
-                        
-                        if pool_totals['queue'] > 50:
-                            self.update_results(f"   ⚠️  High {pool_type} queue length: {pool_totals['queue']}\n")
-                        
-                        if pool_totals['rejected'] > 0:
-                            self.update_results(f"   ⚠️  {pool_type.title()} rejections: {pool_totals['rejected']}\n")
-                        
-                        self.update_results("\n")
-                    
-                    # Add to overall totals
-                    for key in overall_totals:
-                        overall_totals[key] += pool_totals[key]
-            
-            # Overall thread pool health summary
+            # First pass: calculate overall totals
+            overall_totals = {'active': 0, 'queue': 0, 'rejected': 0, 'available': 0}
+            for pool in thread_pool_cat:
+                overall_totals['active'] += int(pool.get('active', 0))
+                overall_totals['queue'] += int(pool.get('queue', 0))
+                overall_totals['rejected'] += int(pool.get('rejected', 0))
+                try:
+                    size = pool.get('size')
+                    if size and size != 'N/A':
+                        overall_totals['available'] += int(size)
+                except (ValueError, TypeError):
+                    pass
+
+            # Display Overall thread pool health summary first
             self.update_results("   Thread Pool Health Summary:\n")
             self.update_results(f"   📊 Total Active Threads: {overall_totals['active']}\n")
             self.update_results(f"   📊 Total Queued Operations: {overall_totals['queue']}\n")
@@ -772,106 +717,100 @@ class ElasticsearchAnalyzer:
             overall_utilization = (overall_totals['active'] / overall_totals['available'] * 100) if overall_totals['available'] > 0 else 0
             health_status = "🟢 Good" if overall_utilization < 50 else "🟡 Moderate" if overall_utilization < 80 else "🔴 High"
             self.update_results(f"   {health_status} Overall Thread Pool Utilization: {overall_utilization:.1f}%\n\n")
-            
+
+            # Second pass: display per-pool details
+            pool_types = ['search', 'get', 'bulk', 'write', 'management', 'flush', 'refresh', 'merge']
+            for pool_type in pool_types:
+                pools = [p for p in thread_pool_cat if p.get('name') == pool_type]
+                
+                if pools:
+                    pool_totals = {'active': 0, 'queue': 0, 'rejected': 0, 'available': 0}
+                    table_rows = []
+                    
+                    for pool in pools:
+                        active = int(pool.get('active', 0))
+                        queue = int(pool.get('queue', 0))
+                        rejected = int(pool.get('rejected', 0))
+                        pool_totals['active'] += active
+                        pool_totals['queue'] += queue
+                        pool_totals['rejected'] += rejected
+                        try:
+                            size = pool.get('size')
+                            if size and size != 'N/A':
+                                pool_totals['available'] += int(size)
+                        except (ValueError, TypeError):
+                            pass
+                        
+                        table_rows.append([
+                            pool.get('node_name', 'Unknown'),
+                            str(active), str(queue), pool.get('size', 'N/A'), str(rejected)
+                        ])
+                    
+                    if pool_totals['active'] > 0 or pool_totals['queue'] > 0 or pool_totals['rejected'] > 0:
+                        headers = ['Node', 'Active', 'Queue', 'Size', 'Rejected']
+                        self.update_results(self._format_table(
+                            headers=headers,
+                            rows=sorted(table_rows, key=lambda x: x[0]),
+                            title=f"{pool_type.title()} Thread Pool"
+                        ))
+                        
+                        if pool_totals['available'] > 0:
+                            utilization = (pool_totals['active'] / pool_totals['available']) * 100
+                            if utilization > 80:
+                                self.update_results(f"   ⚠️  High {pool_type} thread utilization: {utilization:.1f}%\n")
+                        if pool_totals['queue'] > 50:
+                            self.update_results(f"   ⚠️  High {pool_type} queue length: {pool_totals['queue']}\n")
+                        if pool_totals['rejected'] > 0:
+                            self.update_results(f"   ⚠️  {pool_type.title()} rejections: {pool_totals['rejected']}\n")
+                        self.update_results("\n")
+
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve thread pool info: {str(e)}\n\n")
     
     def _analyze_memory_and_gc(self):
         """Memory and garbage collection analysis"""
         self.update_results("🧠 MEMORY & GARBAGE COLLECTION ANALYSIS:\n\n")
-        
         try:
-            # Get JVM and memory stats
             jvm_stats = self.es.nodes.stats(metric=['jvm'])
             
-            gc_summary = {
-                'young_collections': 0,
-                'young_time_ms': 0,
-                'old_collections': 0,
-                'old_time_ms': 0
-            }
-            
-            memory_table_rows = []
-            gc_table_rows = []
-            
+            gc_summary = {'young_collections': 0, 'young_time_ms': 0, 'old_collections': 0, 'old_time_ms': 0}
+            memory_table_rows, gc_table_rows, warnings = [], [], []
+
             for node_id, node_data in jvm_stats.get('nodes', {}).items():
                 node_name = node_data.get('name', 'Unknown')
                 jvm = node_data.get('jvm', {})
-                
-                # Memory analysis
                 mem = jvm.get('mem', {})
                 heap_used_percent = mem.get('heap_used_percent', 0)
                 heap_max_mb = mem.get('heap_max_in_bytes', 0) / (1024 * 1024)
                 heap_used_mb = mem.get('heap_used_in_bytes', 0) / (1024 * 1024)
                 
-                # Memory pools
                 pools = mem.get('pools', {})
                 old_gen = pools.get('old', {})
                 old_gen_used_mb = old_gen.get('used_in_bytes', 0) / (1024 * 1024)
                 old_gen_max_mb = old_gen.get('max_in_bytes', 1) / (1024 * 1024)
                 old_gen_percent = (old_gen_used_mb / old_gen_max_mb * 100) if old_gen_max_mb > 0 else 0
                 
-                memory_table_rows.append([
-                    node_name,
-                    f"{heap_used_mb:.0f}MB",
-                    f"{heap_max_mb:.0f}MB",
-                    f"{heap_used_percent:.1f}%",
-                    f"{old_gen_used_mb:.0f}MB",
-                    f"{old_gen_percent:.1f}%"
-                ])
+                memory_table_rows.append([node_name, f"{heap_used_mb:.0f}MB", f"{heap_max_mb:.0f}MB", f"{heap_used_percent:.1f}%", f"{old_gen_used_mb:.0f}MB", f"{old_gen_percent:.1f}%"])
                 
-                # GC analysis
-                gc = jvm.get('gc', {})
-                collectors = gc.get('collectors', {})
-                
-                young = collectors.get('young', {})
-                old = collectors.get('old', {})
-                
-                young_count = young.get('collection_count', 0)
-                young_time = young.get('collection_time_in_millis', 0)
-                old_count = old.get('collection_count', 0)
-                old_time = old.get('collection_time_in_millis', 0)
+                gc = jvm.get('gc', {}).get('collectors', {})
+                young = gc.get('young', {})
+                old = gc.get('old', {})
+                young_count, young_time = young.get('collection_count', 0), young.get('collection_time_in_millis', 0)
+                old_count, old_time = old.get('collection_count', 0), old.get('collection_time_in_millis', 0)
                 
                 gc_summary['young_collections'] += young_count
                 gc_summary['young_time_ms'] += young_time
                 gc_summary['old_collections'] += old_count
                 gc_summary['old_time_ms'] += old_time
                 
-                # Calculate average GC times
                 avg_young_gc = young_time / young_count if young_count > 0 else 0
                 avg_old_gc = old_time / old_count if old_count > 0 else 0
+                gc_table_rows.append([node_name, str(young_count), f"{avg_young_gc:.1f}ms", str(old_count), f"{avg_old_gc:.1f}ms" if old_count > 0 else "0ms"])
                 
-                gc_table_rows.append([
-                    node_name,
-                    str(young_count),
-                    f"{avg_young_gc:.1f}ms",
-                    str(old_count),
-                    f"{avg_old_gc:.1f}ms" if old_count > 0 else "0ms"
-                ])
-                
-                # Memory pressure warnings
-                if heap_used_percent > 85:
-                    self.update_results(f"   ⚠️  High heap usage on {node_name}: {heap_used_percent:.1f}%\n")
-                if old_gen_percent > 80:
-                    self.update_results(f"   ⚠️  High old generation usage on {node_name}: {old_gen_percent:.1f}%\n")
-            
-            # Display memory table
-            memory_headers = ['Node', 'Heap Used', 'Heap Max', 'Heap %', 'Old Gen Used', 'Old Gen %']
-            self.update_results(self._format_table(
-                headers=memory_headers,
-                rows=memory_table_rows,
-                title="Memory Utilization"
-            ))
-            
-            # Display GC table
-            gc_headers = ['Node', 'Young GCs', 'Avg Young', 'Old GCs', 'Avg Old']
-            self.update_results(self._format_table(
-                headers=gc_headers,
-                rows=gc_table_rows,
-                title="Garbage Collection Performance"
-            ))
-            
-            # GC Health Assessment
+                if heap_used_percent > 85: warnings.append(f"   ⚠️  High heap usage on {node_name}: {heap_used_percent:.1f}%")
+                if old_gen_percent > 80: warnings.append(f"   ⚠️  High old generation usage on {node_name}: {old_gen_percent:.1f}%")
+
+            # Display Summary First
             total_gc_time = gc_summary['young_time_ms'] + gc_summary['old_time_ms']
             total_collections = gc_summary['young_collections'] + gc_summary['old_collections']
             avg_gc_time = total_gc_time / total_collections if total_collections > 0 else 0
@@ -880,13 +819,17 @@ class ElasticsearchAnalyzer:
             self.update_results(f"   📊 Total GC Collections: {total_collections:,}\n")
             self.update_results(f"   📊 Average GC Time: {avg_gc_time:.2f}ms\n")
             self.update_results(f"   📊 Total GC Time: {total_gc_time/1000:.1f}s\n")
-            
-            if avg_gc_time > 100:
-                self.update_results("   ⚠️  High average GC pause times detected\n")
-            if gc_summary['old_collections'] > gc_summary['young_collections'] * 0.1:
-                self.update_results("   ⚠️  Frequent old generation GCs detected\n")
-                
+            if avg_gc_time > 100: self.update_results("   ⚠️  High average GC pause times detected\n")
+            if gc_summary['old_collections'] > gc_summary['young_collections'] * 0.1: self.update_results("   ⚠️  Frequent old generation GCs detected\n")
             self.update_results("\n")
+
+            # Display Details
+            if warnings:
+                for warning in warnings: self.update_results(warning + "\n")
+                self.update_results("\n")
+
+            self.update_results(self._format_table(headers=['Node', 'Heap Used', 'Heap Max', 'Heap %', 'Old Gen Used', 'Old Gen %'], rows=memory_table_rows, title="Memory Utilization"))
+            self.update_results(self._format_table(headers=['Node', 'Young GCs', 'Avg Young', 'Old GCs', 'Avg Old'], rows=gc_table_rows, title="Garbage Collection Performance"))
             
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve memory/GC info: {str(e)}\n\n")
@@ -894,189 +837,93 @@ class ElasticsearchAnalyzer:
     def _analyze_search_performance(self):
         """Search performance and cache analysis"""
         self.update_results("🔍 SEARCH PERFORMANCE & CACHE ANALYSIS:\n\n")
-        
         try:
-            # Get search and cache statistics
             indices_stats = self.es.indices.stats(metric=['search', 'query_cache', 'fielddata', 'request_cache'])
             nodes_stats = self.es.nodes.stats(metric=['indices'])
             
-            # Aggregate cache statistics
-            total_cache_stats = {
-                'query_cache_hits': 0,
-                'query_cache_misses': 0,
-                'fielddata_memory_bytes': 0,
-                'request_cache_hits': 0,
-                'request_cache_misses': 0
-            }
-            
-            # Per-index cache analysis
-            cache_table_rows = []
-            
-            for index_name, index_stats in indices_stats.get('indices', {}).items():
-                total_stats = index_stats.get('total', {})
+            total_cache_stats = {'query_cache_hits': 0, 'query_cache_misses': 0, 'fielddata_memory_bytes': 0, 'request_cache_hits': 0, 'request_cache_misses': 0}
+            total_search_stats = {'query_total': 0, 'query_time_ms': 0, 'fetch_total': 0, 'fetch_time_ms': 0}
+            cache_table_rows, search_table_rows, warnings = [], [], []
+
+            for index_name, index_data in indices_stats.get('indices', {}).items():
+                total = index_data.get('total', {})
+                qc = total.get('query_cache', {}); rc = total.get('request_cache', {})
+                qc_hits, qc_misses = qc.get('hit_count', 0), qc.get('miss_count', 0)
+                rc_hits, rc_misses = rc.get('hit_count', 0), rc.get('miss_count', 0)
+                fd_mem_bytes = total.get('fielddata', {}).get('memory_size_in_bytes', 0)
                 
-                # Query cache
-                query_cache = total_stats.get('query_cache', {})
-                qc_hits = query_cache.get('hit_count', 0)
-                qc_misses = query_cache.get('miss_count', 0)
-                qc_memory_mb = query_cache.get('memory_size_in_bytes', 0) / (1024 * 1024)
-                
-                # Field data cache
-                fielddata = total_stats.get('fielddata', {})
-                fd_memory_mb = fielddata.get('memory_size_in_bytes', 0) / (1024 * 1024)
-                
-                # Request cache
-                request_cache = total_stats.get('request_cache', {})
-                rc_hits = request_cache.get('hit_count', 0)
-                rc_misses = request_cache.get('miss_count', 0)
-                
-                # Calculate cache hit rates
-                qc_total = qc_hits + qc_misses
-                qc_hit_rate = (qc_hits / qc_total * 100) if qc_total > 0 else 0
-                
-                rc_total = rc_hits + rc_misses
-                rc_hit_rate = (rc_hits / rc_total * 100) if rc_total > 0 else 0
-                
-                # Only show indices with significant cache activity
-                if qc_total > 1000 or rc_total > 1000 or fd_memory_mb > 10:
-                    cache_table_rows.append([
-                        index_name[:30],  # Truncate long index names
-                        f"{qc_hit_rate:.1f}%" if qc_total > 0 else "N/A",
-                        f"{rc_hit_rate:.1f}%" if rc_total > 0 else "N/A",
-                        f"{qc_memory_mb:.1f}MB",
-                        f"{fd_memory_mb:.1f}MB"
-                    ])
-                
-                # Add to totals
                 total_cache_stats['query_cache_hits'] += qc_hits
                 total_cache_stats['query_cache_misses'] += qc_misses
-                total_cache_stats['fielddata_memory_bytes'] += fielddata.get('memory_size_in_bytes', 0)
                 total_cache_stats['request_cache_hits'] += rc_hits
                 total_cache_stats['request_cache_misses'] += rc_misses
-            
-            # Display cache performance table
-            if cache_table_rows:
-                cache_headers = ['Index', 'Query Cache Hit %', 'Request Cache Hit %', 'Query Cache Mem', 'Field Data Mem']
-                self.update_results(self._format_table(
-                    headers=cache_headers,
-                    rows=cache_table_rows,
-                    title="Cache Performance by Index"
-                ))
-            
-            # Node-level search performance
-            search_table_rows = []
-            total_search_stats = {
-                'query_total': 0,
-                'query_time_ms': 0,
-                'fetch_total': 0,
-                'fetch_time_ms': 0
-            }
-            
+                total_cache_stats['fielddata_memory_bytes'] += fd_mem_bytes
+
+                qc_total, rc_total = qc_hits + qc_misses, rc_hits + rc_misses
+                if qc_total > 1000 or rc_total > 1000 or fd_mem_bytes > 10 * 1024 * 1024:
+                    qc_hit_rate = (qc_hits / qc_total * 100) if qc_total > 0 else 0
+                    rc_hit_rate = (rc_hits / rc_total * 100) if rc_total > 0 else 0
+                    cache_table_rows.append([index_name[:30], f"{qc_hit_rate:.1f}%", f"{rc_hit_rate:.1f}%", f"{qc.get('memory_size_in_bytes', 0) / 1024**2:.1f}MB", f"{fd_mem_bytes / 1024**2:.1f}MB"])
+
             for node_id, node_data in nodes_stats.get('nodes', {}).items():
-                node_name = node_data.get('name', 'Unknown')
-                indices = node_data.get('indices', {})
-                search = indices.get('search', {})
+                search = node_data.get('indices', {}).get('search', {})
+                query_total, query_time = search.get('query_total', 0), search.get('query_time_in_millis', 0)
+                fetch_total, fetch_time = search.get('fetch_total', 0), search.get('fetch_time_in_millis', 0)
                 
-                query_total = search.get('query_total', 0)
-                query_time_ms = search.get('query_time_in_millis', 0)
-                fetch_total = search.get('fetch_total', 0)
-                fetch_time_ms = search.get('fetch_time_in_millis', 0)
-                query_current = search.get('query_current', 0)
-                
-                # Calculate averages
-                avg_query_latency = query_time_ms / query_total if query_total > 0 else 0
-                avg_fetch_latency = fetch_time_ms / fetch_total if fetch_total > 0 else 0
-                
-                search_table_rows.append([
-                    node_name,
-                    f"{query_total:,}",
-                    f"{avg_query_latency:.2f}ms",
-                    f"{fetch_total:,}",
-                    f"{avg_fetch_latency:.2f}ms",
-                    str(query_current)
-                ])
-                
-                # Add to totals
                 total_search_stats['query_total'] += query_total
-                total_search_stats['query_time_ms'] += query_time_ms
+                total_search_stats['query_time_ms'] += query_time
                 total_search_stats['fetch_total'] += fetch_total
-                total_search_stats['fetch_time_ms'] += fetch_time_ms
+                total_search_stats['fetch_time_ms'] += fetch_time
+
+                avg_query = query_time / query_total if query_total > 0 else 0
+                avg_fetch = fetch_time / fetch_total if fetch_total > 0 else 0
+                search_table_rows.append([node_data.get('name', 'Unknown'), f"{query_total:,}", f"{avg_query:.2f}ms", f"{fetch_total:,}", f"{avg_fetch:.2f}ms", str(search.get('query_current', 0))])
                 
-                # Performance warnings
-                if avg_query_latency > 100:
-                    self.update_results(f"   ⚠️  High query latency on {node_name}: {avg_query_latency:.2f}ms\n")
-                if query_current > 10:
-                    self.update_results(f"   ⚠️  High concurrent queries on {node_name}: {query_current}\n")
-            
-            # Display search performance table
-            search_headers = ['Node', 'Total Queries', 'Avg Query Time', 'Total Fetches', 'Avg Fetch Time', 'Current']
-            self.update_results(self._format_table(
-                headers=search_headers,
-                rows=search_table_rows,
-                title="Search Performance by Node"
-            ))
-            
-            # Overall cache and search summary
-            self.update_results("   Search & Cache Summary:\n")
-            
-            # Cache hit rates
+                if avg_query > 100: warnings.append(f"   ⚠️  High query latency on {node_data.get('name', 'Unknown')}: {avg_query:.2f}ms")
+                if search.get('query_current', 0) > 10: warnings.append(f"   ⚠️  High concurrent queries on {node_data.get('name', 'Unknown')}: {search.get('query_current', 0)}")
+
+            # Display Summary First
             total_qc = total_cache_stats['query_cache_hits'] + total_cache_stats['query_cache_misses']
             total_rc = total_cache_stats['request_cache_hits'] + total_cache_stats['request_cache_misses']
-            
             qc_hit_rate = (total_cache_stats['query_cache_hits'] / total_qc * 100) if total_qc > 0 else 0
             rc_hit_rate = (total_cache_stats['request_cache_hits'] / total_rc * 100) if total_rc > 0 else 0
+            avg_cluster_query = total_search_stats['query_time_ms'] / total_search_stats['query_total'] if total_search_stats['query_total'] > 0 else 0
             
+            self.update_results("   Search & Cache Summary:\n")
+            self.update_results(f"   📊 Average Query Latency: {avg_cluster_query:.2f}ms\n")
+            self.update_results(f"   📊 Total Queries: {total_search_stats['query_total']:,}\n")
             self.update_results(f"   📊 Query Cache Hit Rate: {qc_hit_rate:.1f}%\n")
             self.update_results(f"   📊 Request Cache Hit Rate: {rc_hit_rate:.1f}%\n")
-            self.update_results(f"   📊 Field Data Memory: {total_cache_stats['fielddata_memory_bytes'] / (1024 * 1024):.1f}MB\n")
-            
-            # Search performance summary
-            avg_cluster_query_latency = total_search_stats['query_time_ms'] / total_search_stats['query_total'] if total_search_stats['query_total'] > 0 else 0
-            self.update_results(f"   📊 Average Query Latency: {avg_cluster_query_latency:.2f}ms\n")
-            self.update_results(f"   📊 Total Queries: {total_search_stats['query_total']:,}\n")
-            
-            # Performance recommendations
-            if qc_hit_rate < 50 and total_qc > 1000:
-                self.update_results("   ⚠️  Low query cache hit rate - consider query optimization\n")
-            if rc_hit_rate < 80 and total_rc > 1000:
-                self.update_results("   ⚠️  Low request cache hit rate - check request patterns\n")
-            if avg_cluster_query_latency > 50:
-                self.update_results("   ⚠️  High average query latency detected\n")
-                
+            self.update_results(f"   📊 Field Data Memory: {total_cache_stats['fielddata_memory_bytes'] / 1024**2:.1f}MB\n")
+
+            if qc_hit_rate < 50 and total_qc > 1000: self.update_results("   ⚠️  Low query cache hit rate - consider query optimization\n")
+            if rc_hit_rate < 80 and total_rc > 1000: self.update_results("   ⚠️  Low request cache hit rate - check request patterns\n")
+            if avg_cluster_query > 50: self.update_results("   ⚠️  High average query latency detected\n")
             self.update_results("\n")
             
+            # Display Details
+            if warnings:
+                for warning in warnings: self.update_results(warning + "\n")
+                self.update_results("\n")
+
+            if cache_table_rows: self.update_results(self._format_table(headers=['Index', 'Query Cache Hit %', 'Request Cache Hit %', 'Query Cache Mem', 'Field Data Mem'], rows=cache_table_rows, title="Cache Performance by Index"))
+            self.update_results(self._format_table(headers=['Node', 'Total Queries', 'Avg Query Time', 'Total Fetches', 'Avg Fetch Time', 'Current'], rows=search_table_rows, title="Search Performance by Node"))
+
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve search performance info: {str(e)}\n\n")
     
     def _analyze_io_performance(self):
         """I/O and disk performance analysis"""
         self.update_results("💾 I/O & DISK PERFORMANCE ANALYSIS:\n\n")
-        
         try:
-            # Get file system stats
             fs_stats = self.es.nodes.stats(metric=['fs'])
             
-            disk_table_rows = []
-            
-            total_disk_stats = {
-                'total_reads': 0,
-                'total_writes': 0,
-                'read_kb': 0,
-                'write_kb': 0,
-                'total_space_gb': 0,
-                'available_space_gb': 0
-            }
-            
+            disk_table_rows, warnings = [], []
+            total_disk_stats = {'total_reads': 0, 'total_writes': 0, 'read_kb': 0, 'write_kb': 0, 'total_space_gb': 0, 'available_space_gb': 0}
+
             for node_id, node_data in fs_stats.get('nodes', {}).items():
                 node_name = node_data.get('name', 'Unknown')
-                
-                # File system analysis
                 fs = node_data.get('fs', {})
-                
-                # Disk space analysis
-                total_space_bytes = 0
-                available_space_bytes = 0
-                
+                total_space_bytes, available_space_bytes = 0, 0
                 for data_path in fs.get('data', []):
                     total_space_bytes += data_path.get('total_in_bytes', 0)
                     available_space_bytes += data_path.get('available_in_bytes', 0)
@@ -1086,71 +933,38 @@ class ElasticsearchAnalyzer:
                 used_space_gb = total_space_gb - available_space_gb
                 disk_used_percent = (used_space_gb / total_space_gb * 100) if total_space_gb > 0 else 0
                 
-                # I/O statistics
-                io_stats = fs.get('io_stats', {})
-                total_io = io_stats.get('total', {})
+                total_io = fs.get('io_stats', {}).get('total', {})
+                read_ops, write_ops = total_io.get('read_operations', 0), total_io.get('write_operations', 0)
+                read_kb, write_kb = total_io.get('read_kilobytes', 0), total_io.get('write_kilobytes', 0)
                 
-                read_ops = total_io.get('read_operations', 0)
-                write_ops = total_io.get('write_operations', 0)
-                read_kb = total_io.get('read_kilobytes', 0)
-                write_kb = total_io.get('write_kilobytes', 0)
+                disk_table_rows.append([node_name, f"{total_space_gb:.1f}GB", f"{used_space_gb:.1f}GB", f"{disk_used_percent:.1f}%", f"{read_ops:,}", f"{write_ops:,}", f"{read_kb/1024:.1f}MB", f"{write_kb/1024:.1f}MB"])
                 
-                disk_table_rows.append([
-                    node_name,
-                    f"{total_space_gb:.1f}GB",
-                    f"{used_space_gb:.1f}GB",
-                    f"{disk_used_percent:.1f}%",
-                    f"{read_ops:,}" if read_ops > 0 else "N/A",
-                    f"{write_ops:,}" if write_ops > 0 else "N/A",
-                    f"{read_kb/1024:.1f}MB" if read_kb > 0 else "N/A",
-                    f"{write_kb/1024:.1f}MB" if write_kb > 0 else "N/A"
-                ])
+                total_disk_stats['total_reads'] += read_ops; total_disk_stats['total_writes'] += write_ops
+                total_disk_stats['read_kb'] += read_kb; total_disk_stats['write_kb'] += write_kb
+                total_disk_stats['total_space_gb'] += total_space_gb; total_disk_stats['available_space_gb'] += available_space_gb
                 
-                # Add to totals
-                total_disk_stats['total_reads'] += read_ops
-                total_disk_stats['total_writes'] += write_ops
-                total_disk_stats['read_kb'] += read_kb
-                total_disk_stats['write_kb'] += write_kb
-                total_disk_stats['total_space_gb'] += total_space_gb
-                total_disk_stats['available_space_gb'] += available_space_gb
-                
-                # Disk warnings
-                if disk_used_percent > 85:
-                    self.update_results(f"   ⚠️  High disk usage on {node_name}: {disk_used_percent:.1f}%\n")
-                if available_space_gb < 10:  # Less than 10GB free
-                    self.update_results(f"   ⚠️  Low disk space on {node_name}: {available_space_gb:.1f}GB remaining\n")
-                
-            # Display disk performance table
-            disk_headers = ['Node', 'Total Space', 'Used Space', 'Usage %', 'Read Ops', 'Write Ops', 'Read Data', 'Write Data']
-            self.update_results(self._format_table(
-                headers=disk_headers,
-                rows=disk_table_rows,
-                title="Disk Usage and I/O Performance"
-            ))
-            
-            # I/O and disk summary
-            self.update_results("   I/O & Storage Summary:\n")
+                if disk_used_percent > 85: warnings.append(f"   ⚠️  High disk usage on {node_name}: {disk_used_percent:.1f}%")
+                if available_space_gb < 10: warnings.append(f"   ⚠️  Low disk space on {node_name}: {available_space_gb:.1f}GB remaining")
+
+            # Display Summary First
             cluster_used_percent = ((total_disk_stats['total_space_gb'] - total_disk_stats['available_space_gb']) / total_disk_stats['total_space_gb'] * 100) if total_disk_stats['total_space_gb'] > 0 else 0
-            
+            self.update_results("   I/O & Storage Summary:\n")
             self.update_results(f"   📊 Total Cluster Storage: {total_disk_stats['total_space_gb']:.1f}GB\n")
             self.update_results(f"   📊 Available Storage: {total_disk_stats['available_space_gb']:.1f}GB\n")
             self.update_results(f"   📊 Cluster Storage Usage: {cluster_used_percent:.1f}%\n")
-            
-            if total_disk_stats['total_reads'] > 0:
-                self.update_results(f"   📊 Total Disk Reads: {total_disk_stats['total_reads']:,}\n")
-                self.update_results(f"   📊 Total Read Data: {total_disk_stats['read_kb']/1024:.1f}MB\n")
-            
-            if total_disk_stats['total_writes'] > 0:
-                self.update_results(f"   📊 Total Disk Writes: {total_disk_stats['total_writes']:,}\n")
-                self.update_results(f"   📊 Total Write Data: {total_disk_stats['write_kb']/1024:.1f}MB\n")
-            
-            # Storage health assessment
-            if cluster_used_percent > 80:
-                self.update_results("   ⚠️  High cluster storage utilization\n")
-            if total_disk_stats['available_space_gb'] < 50:  # Less than 50GB cluster-wide
-                self.update_results("   ⚠️  Low available storage space\n")
-                
+            self.update_results(f"   📊 Total Disk Reads: {total_disk_stats['total_reads']:,}\n")
+            self.update_results(f"   📊 Total Disk Writes: {total_disk_stats['total_writes']:,}\n")
+            if cluster_used_percent > 80: self.update_results("   ⚠️  High cluster storage utilization\n")
+            if total_disk_stats['available_space_gb'] < 50: self.update_results("   ⚠️  Low available storage space\n")
             self.update_results("\n")
+
+            # Display Details
+            if warnings:
+                for warning in warnings: self.update_results(warning + "\n")
+                self.update_results("\n")
+
+            disk_headers = ['Node', 'Total Space', 'Used Space', 'Usage %', 'Read Ops', 'Write Ops', 'Read Data', 'Write Data']
+            self.update_results(self._format_table(headers=disk_headers, rows=disk_table_rows, title="Disk Usage and I/O Performance"))
             
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve I/O performance info: {str(e)}\n\n")
@@ -1158,425 +972,146 @@ class ElasticsearchAnalyzer:
     def _analyze_index_operations(self):
         """Index operation performance analysis"""
         self.update_results("📝 INDEX OPERATIONS ANALYSIS:\n\n")
-        
         try:
-            # Get index-level statistics
             indices_stats = self.es.indices.stats(metric=['indexing', 'refresh', 'merge', 'flush'])
             
-            # Aggregate statistics
-            indexing_table_rows = []
-            operations_table_rows = []
-            
-            total_indexing_stats = {
-                'index_total': 0,
-                'index_time_ms': 0,
-                'delete_total': 0,
-                'delete_time_ms': 0,
-                'refresh_total': 0,
-                'refresh_time_ms': 0,
-                'merge_total': 0,
-                'merge_time_ms': 0,
-                'flush_total': 0,
-                'flush_time_ms': 0
-            }
-            
-            # Analyze per-index performance
-            for index_name, index_stats in indices_stats.get('indices', {}).items():
-                total_stats = index_stats.get('total', {})
-                
-                # Indexing stats
-                indexing = total_stats.get('indexing', {})
-                index_total = indexing.get('index_total', 0)
-                index_time_ms = indexing.get('index_time_in_millis', 0)
-                delete_total = indexing.get('delete_total', 0)
-                delete_time_ms = indexing.get('delete_time_in_millis', 0)
-                index_current = indexing.get('index_current', 0)
-                
-                # Operation stats
-                refresh = total_stats.get('refresh', {})
-                refresh_total = refresh.get('total', 0)
-                refresh_time_ms = refresh.get('total_time_in_millis', 0)
-                
-                merge = total_stats.get('merge', {})
-                merge_total = merge.get('total', 0)
-                merge_time_ms = merge.get('total_time_in_millis', 0)
-                merge_current = merge.get('current', 0)
-                
-                flush = total_stats.get('flush', {})
-                flush_total = flush.get('total', 0)
-                flush_time_ms = flush.get('total_time_in_millis', 0)
-                
-                # Calculate all averages unconditionally to prevent UnboundLocalError
-                avg_index_time = index_time_ms / index_total if index_total > 0 else 0
-                avg_delete_time = delete_time_ms / delete_total if delete_total > 0 else 0
-                avg_refresh_time = refresh_time_ms / refresh_total if refresh_total > 0 else 0
-                avg_merge_time = merge_time_ms / merge_total if merge_total > 0 else 0
-                avg_flush_time = flush_time_ms / flush_total if flush_total > 0 else 0
+            indexing_table_rows, operations_table_rows, warnings = [], [], []
+            totals = {'index_total': 0, 'index_time_ms': 0, 'delete_total': 0, 'delete_time_ms': 0, 'refresh_total': 0, 'refresh_time_ms': 0, 'merge_total': 0, 'merge_time_ms': 0}
 
-                # Only show indices with significant activity in the table
-                if index_total > 1000 or delete_total > 100 or index_current > 0:
-                    indexing_table_rows.append([
-                        index_name[:25],  # Truncate long names
-                        f"{index_total:,}",
-                        f"{avg_index_time:.2f}ms",
-                        f"{delete_total:,}",
-                        f"{avg_delete_time:.2f}ms" if delete_total > 0 else "N/A",
-                        str(index_current)
-                    ])
+            for index_name, index_data in indices_stats.get('indices', {}).items():
+                total = index_data.get('total', {})
+                indexing = total.get('indexing', {}); refresh = total.get('refresh', {}); merge = total.get('merge', {})
                 
-                # Show operation performance for active indices
-                if refresh_total > 0 or merge_total > 0 or flush_total > 0:
-                    operations_table_rows.append([
-                        index_name[:25],
-                        f"{refresh_total:,}",
-                        f"{avg_refresh_time:.2f}ms" if refresh_total > 0 else "N/A",
-                        f"{merge_total:,}",
-                        f"{avg_merge_time:.2f}ms" if merge_total > 0 else "N/A",
-                        str(merge_current)
-                    ])
+                index_total, index_time = indexing.get('index_total', 0), indexing.get('index_time_in_millis', 0)
+                delete_total, delete_time = indexing.get('delete_total', 0), indexing.get('delete_time_in_millis', 0)
+                refresh_total, refresh_time = refresh.get('total', 0), refresh.get('total_time_in_millis', 0)
+                merge_total, merge_time = merge.get('total', 0), merge.get('total_time_in_millis', 0)
+
+                for key, val in [('index_total', index_total), ('index_time_ms', index_time), ('delete_total', delete_total), ('delete_time_ms', delete_time), ('refresh_total', refresh_total), ('refresh_time_ms', refresh_time), ('merge_total', merge_total), ('merge_time_ms', merge_time)]:
+                    totals[key] += val
+
+                avg_index = index_time / index_total if index_total > 0 else 0
+                avg_delete = delete_time / delete_total if delete_total > 0 else 0
+                avg_refresh = refresh_time / refresh_total if refresh_total > 0 else 0
+                avg_merge = merge_time / merge_total if merge_total > 0 else 0
+
+                if index_total > 1000 or delete_total > 100 or indexing.get('index_current', 0) > 0:
+                    indexing_table_rows.append([index_name[:25], f"{index_total:,}", f"{avg_index:.2f}ms", f"{delete_total:,}", f"{avg_delete:.2f}ms", str(indexing.get('index_current', 0))])
+                if refresh_total > 0 or merge_total > 0:
+                    operations_table_rows.append([index_name[:25], f"{refresh_total:,}", f"{avg_refresh:.2f}ms", f"{merge_total:,}", f"{avg_merge:.2f}ms", str(merge.get('current', 0))])
                 
-                # Add to totals
-                total_indexing_stats['index_total'] += index_total
-                total_indexing_stats['index_time_ms'] += index_time_ms
-                total_indexing_stats['delete_total'] += delete_total
-                total_indexing_stats['delete_time_ms'] += delete_time_ms
-                total_indexing_stats['refresh_total'] += refresh_total
-                total_indexing_stats['refresh_time_ms'] += refresh_time_ms
-                total_indexing_stats['merge_total'] += merge_total
-                total_indexing_stats['merge_time_ms'] += merge_time_ms
-                total_indexing_stats['flush_total'] += flush_total
-                total_indexing_stats['flush_time_ms'] += flush_time_ms
-                
-                # Performance warnings (now safe to call)
-                if avg_index_time > 50:
-                    self.update_results(f"   ⚠️  High indexing latency in {index_name[:20]}: {avg_index_time:.2f}ms\n")
-                if merge_current > 2:
-                    self.update_results(f"   ⚠️  High concurrent merges in {index_name[:20]}: {merge_current}\n")
-                if avg_merge_time > 1000:  # > 1 second
-                    self.update_results(f"   ⚠️  Slow merge operations in {index_name[:20]}: {avg_merge_time:.2f}ms\n")
+                if avg_index > 50: warnings.append(f"   ⚠️  High indexing latency in {index_name[:20]}: {avg_index:.2f}ms")
+                if merge.get('current', 0) > 2: warnings.append(f"   ⚠️  High concurrent merges in {index_name[:20]}: {merge.get('current', 0)}")
+                if avg_merge > 1000: warnings.append(f"   ⚠️  Slow merge operations in {index_name[:20]}: {avg_merge:.2f}ms")
+
+            # Display Summary First
+            avg_index_latency = totals['index_time_ms'] / totals['index_total'] if totals['index_total'] > 0 else 0
+            avg_refresh_latency = totals['refresh_time_ms'] / totals['refresh_total'] if totals['refresh_total'] > 0 else 0
+            avg_merge_latency = totals['merge_time_ms'] / totals['merge_total'] if totals['merge_total'] > 0 else 0
             
-            # Display indexing performance table
-            if indexing_table_rows:
-                indexing_headers = ['Index', 'Index Ops', 'Avg Index Time', 'Delete Ops', 'Avg Delete Time', 'Current']
-                self.update_results(self._format_table(
-                    headers=indexing_headers,
-                    rows=indexing_table_rows,
-                    title="Indexing Performance by Index"
-                ))
-            
-            # Display operations performance table
-            if operations_table_rows:
-                ops_headers = ['Index', 'Refresh Ops', 'Avg Refresh', 'Merge Ops', 'Avg Merge', 'Current Merges']
-                self.update_results(self._format_table(
-                    headers=ops_headers,
-                    rows=operations_table_rows,
-                    title="Index Operations Performance"
-                ))
-            
-            # Overall index operations summary
             self.update_results("   Index Operations Summary:\n")
-            
-            # Calculate averages
-            avg_index_latency = total_indexing_stats['index_time_ms'] / total_indexing_stats['index_total'] if total_indexing_stats['index_total'] > 0 else 0
-            avg_refresh_latency = total_indexing_stats['refresh_time_ms'] / total_indexing_stats['refresh_total'] if total_indexing_stats['refresh_total'] > 0 else 0
-            avg_merge_latency = total_indexing_stats['merge_time_ms'] / total_indexing_stats['merge_total'] if total_indexing_stats['merge_total'] > 0 else 0
-            
-            self.update_results(f"   📊 Total Index Operations: {total_indexing_stats['index_total']:,}\n")
+            self.update_results(f"   📊 Total Index Operations: {totals['index_total']:,}\n")
             self.update_results(f"   📊 Average Index Latency: {avg_index_latency:.2f}ms\n")
-            self.update_results(f"   📊 Total Refresh Operations: {total_indexing_stats['refresh_total']:,}\n")
+            self.update_results(f"   📊 Total Refresh Operations: {totals['refresh_total']:,}\n")
             self.update_results(f"   📊 Average Refresh Latency: {avg_refresh_latency:.2f}ms\n")
-            self.update_results(f"   📊 Total Merge Operations: {total_indexing_stats['merge_total']:,}\n")
-            
-            if total_indexing_stats['merge_total'] > 0:
-                self.update_results(f"   📊 Average Merge Latency: {avg_merge_latency:.2f}ms\n")
-            
-            # Performance recommendations
-            if avg_index_latency > 20:
-                self.update_results("   ⚠️  High average indexing latency - consider optimizing mapping or bulk sizes\n")
-            if avg_refresh_latency > 100:
-                self.update_results("   ⚠️  Slow refresh operations - consider adjusting refresh intervals\n")
-            if avg_merge_latency > 500:
-                self.update_results("   ⚠️  Slow merge operations - check segment optimization settings\n")
-                
+            self.update_results(f"   📊 Total Merge Operations: {totals['merge_total']:,}\n")
+            if totals['merge_total'] > 0: self.update_results(f"   📊 Average Merge Latency: {avg_merge_latency:.2f}ms\n")
+            if avg_index_latency > 20: self.update_results("   ⚠️  High average indexing latency - consider optimizing mapping or bulk sizes\n")
+            if avg_refresh_latency > 100: self.update_results("   ⚠️  Slow refresh operations - consider adjusting refresh intervals\n")
+            if avg_merge_latency > 500: self.update_results("   ⚠️  Slow merge operations - check segment optimization settings\n")
             self.update_results("\n")
+
+            # Display Details
+            if warnings:
+                for warning in warnings: self.update_results(warning + "\n")
+                self.update_results("\n")
             
+            if indexing_table_rows: self.update_results(self._format_table(headers=['Index', 'Index Ops', 'Avg Index Time', 'Delete Ops', 'Avg Delete Time', 'Current'], rows=indexing_table_rows, title="Indexing Performance by Index"))
+            if operations_table_rows: self.update_results(self._format_table(headers=['Index', 'Refresh Ops', 'Avg Refresh', 'Merge Ops', 'Avg Merge', 'Current Merges'], rows=operations_table_rows, title="Index Operations Performance"))
+
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve index operations info: {str(e)}\n\n")
 
     def _analyze_segments_and_allocation(self):
         """Segment and allocation analysis"""
         self.update_results("🔧 SEGMENTS & ALLOCATION ANALYSIS:\n\n")
-        
         try:
-            # Get segment and allocation information
             segments_stats = self.es.indices.segments()
-            allocation_info = self.es.cat.allocation(h='node,shards,disk.indices,disk.used,disk.avail,disk.total,disk.percent', format='json')
+            allocation_info = self.es.cat.allocation(h='node,shards,disk.percent', format='json')
             
-            # Analyze segments by index
-            segment_table_rows = []
-            total_segments = 0
-            total_segment_memory = 0
-            
+            segment_table_rows, allocation_table_rows, warnings = [], [], []
+            total_segments, total_segment_memory, total_shards = 0, 0, 0
+
             for index_name, index_data in segments_stats.get('indices', {}).items():
-                shards = index_data.get('shards', {})
-                index_segments = 0
-                index_memory_bytes = 0
-                max_segment_size = 0
-                
-                for shard_id, shard_data in shards.items():
-                    for segment_data in shard_data:
-                        segments = segment_data.get('segments', {})
-                        for segment_name, segment_info in segments.items():
+                index_segments, index_memory_bytes, max_segment_size = 0, 0, 0
+                for shard_list in index_data.get('shards', {}).values():
+                    for shard in shard_list:
+                        for seg_info in shard.get('segments', {}).values():
                             index_segments += 1
-                            segment_size = segment_info.get('size_in_bytes', 0)
-                            index_memory_bytes += segment_info.get('memory_in_bytes', 0)
-                            max_segment_size = max(max_segment_size, segment_size)
+                            index_memory_bytes += seg_info.get('memory_in_bytes', 0)
+                            max_segment_size = max(max_segment_size, seg_info.get('size_in_bytes', 0))
                 
                 if index_segments > 0:
-                    segment_table_rows.append([
-                        index_name[:25],
-                        str(index_segments),
-                        f"{index_memory_bytes / (1024 * 1024):.1f}MB",
-                        f"{max_segment_size / (1024 * 1024):.1f}MB"
-                    ])
-                    
+                    segment_table_rows.append([index_name[:25], str(index_segments), f"{index_memory_bytes / 1024**2:.1f}MB", f"{max_segment_size / 1024**2:.1f}MB"])
                     total_segments += index_segments
                     total_segment_memory += index_memory_bytes
-                    
-                    # Segment warnings
-                    if index_segments > 100:
-                        self.update_results(f"   ⚠️  High segment count in {index_name[:20]}: {index_segments}\n")
-                    if max_segment_size > 5 * 1024 * 1024 * 1024:  # > 5GB
-                        self.update_results(f"   ⚠️  Large segment detected in {index_name[:20]}: {max_segment_size / (1024**3):.1f}GB\n")
-            
-            # Display segments table
-            if segment_table_rows:
-                segment_headers = ['Index', 'Segments', 'Memory Usage', 'Largest Segment']
-                self.update_results(self._format_table(
-                    headers=segment_headers,
-                    rows=sorted(segment_table_rows, key=lambda x: int(x[1]), reverse=True)[:20],  # Top 20
-                    title="Segment Analysis (Top 20 by Count)"
-                ))
-            
-            # Analyze shard allocation
-            allocation_table_rows = []
-            total_shards = 0
-            total_disk_used = 0
-            total_disk_available = 0
-            
+                    if index_segments > 100: warnings.append(f"   ⚠️  High segment count in {index_name[:20]}: {index_segments}")
+                    if max_segment_size > 5 * 1024**3: warnings.append(f"   ⚠️  Large segment (>5GB) in {index_name[:20]}")
+
             for node_data in allocation_info:
-                node_name = node_data.get('node', 'Unknown')
                 shards_count = int(node_data.get('shards', 0))
-                disk_used = node_data.get('disk.used', '0b')
-                disk_avail = node_data.get('disk.avail', '0b')
-                disk_total = node_data.get('disk.total', '0b')
-                disk_percent = float(node_data.get('disk.percent', 0))
-                
-                allocation_table_rows.append([
-                    node_name,
-                    str(shards_count),
-                    disk_used,
-                    disk_avail,
-                    f"{disk_percent:.1f}%"
-                ])
-                
                 total_shards += shards_count
-                # Convert disk sizes to bytes for calculation
-                try:
-                    disk_used_bytes = self._parse_size_to_gb(disk_used) * 1024**3
-                    disk_avail_bytes = self._parse_size_to_gb(disk_avail) * 1024**3
-                    total_disk_used += disk_used_bytes
-                    total_disk_available += disk_avail_bytes
-                except:
-                    pass
-                
-                # Allocation warnings
-                if shards_count > 1000:
-                    self.update_results(f"   ⚠️  High shard count on {node_name}: {shards_count}\n")
-                if disk_percent > 85:
-                    self.update_results(f"   ⚠️  High disk usage on {node_name}: {disk_percent:.1f}%\n")
+                if shards_count > 1000: warnings.append(f"   ⚠️  High shard count on {node_data.get('node', 'Unknown')}: {shards_count}")
+                if float(node_data.get('disk.percent', 0)) > 85: warnings.append(f"   ⚠️  High disk usage on {node_data.get('node', 'Unknown')}")
             
-            # Display allocation table
-            allocation_headers = ['Node', 'Shards', 'Disk Used', 'Disk Available', 'Usage %']
-            self.update_results(self._format_table(
-                headers=allocation_headers,
-                rows=allocation_table_rows,
-                title="Shard Allocation by Node"
-            ))
-            
-            # Segments and allocation summary
+            # Display Summary First
+            num_indices = len(segment_table_rows)
+            avg_segments = total_segments / num_indices if num_indices > 0 else 0
             self.update_results("   Segments & Allocation Summary:\n")
             self.update_results(f"   📊 Total Segments: {total_segments:,}\n")
-            self.update_results(f"   📊 Total Segment Memory: {total_segment_memory / (1024 * 1024):.1f}MB\n")
-            self.update_results(f"   📊 Total Shards: {total_shards}\n")
-            
-            # Calculate average segments per index
-            num_indices = len([r for r in segment_table_rows if int(r[1]) > 0])
-            avg_segments_per_index = total_segments / num_indices if num_indices > 0 else 0
-            self.update_results(f"   📊 Average Segments per Index: {avg_segments_per_index:.1f}\n")
-            
-            # Health recommendations
-            if avg_segments_per_index > 50:
-                self.update_results("   ⚠️  High average segments per index - consider force merge operations\n")
-            if total_segment_memory > 1024 * 1024 * 1024:  # > 1GB
-                self.update_results("   ⚠️  High segment memory usage - monitor heap pressure\n")
-            if total_shards > total_segments * 0.8:  # Many shards relative to segments
-                self.update_results("   ⚠️  High shard-to-segment ratio - consider index optimization\n")
-                
+            self.update_results(f"   📊 Total Segment Memory: {total_segment_memory / 1024**2:.1f}MB\n")
+            self.update_results(f"   📊 Total Shards (on data nodes): {total_shards}\n")
+            self.update_results(f"   📊 Average Segments per Index: {avg_segments:.1f}\n")
+            if avg_segments > 50: self.update_results("   ⚠️  High average segments per index - consider force merge operations\n")
+            if total_segment_memory > 1024**3: self.update_results("   ⚠️  High segment memory usage (>1GB) - monitor heap pressure\n")
             self.update_results("\n")
-            
+
+            # Display Details
+            if warnings:
+                for warning in warnings: self.update_results(warning + "\n")
+                self.update_results("\n")
+
+            if segment_table_rows: self.update_results(self._format_table(headers=['Index', 'Segments', 'Memory Usage', 'Largest Segment'], rows=sorted(segment_table_rows, key=lambda x: int(x[1]), reverse=True)[:20], title="Segment Analysis (Top 20 by Count)"))
+            self.update_results(self._format_table(headers=['Node', 'Shards', 'Disk Used', 'Disk Available', 'Usage %'], rows=self.es.cat.allocation(format='json', h='node,shards,disk.used,disk.avail,disk.percent'), title="Shard Allocation by Node"))
+
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve segments/allocation info: {str(e)}\n\n")
 
     def _analyze_hot_threads(self):
         """Hot threads analysis for bottleneck detection"""
         self.update_results("🔥 HOT THREADS ANALYSIS:\n\n")
-        
         try:
-            # Get hot threads information
-            hot_threads = self.es.nodes.hot_threads(threads=5, interval='500ms', snapshots=3)
+            hot_threads_text = self.es.nodes.hot_threads(threads=5, interval='500ms', snapshots=3)
             
-            # Parse hot threads output
-            thread_analysis = {
-                'cpu_intensive': [],
-                'blocked_threads': [],
-                'gc_threads': [],
-                'search_threads': [],
-                'indexing_threads': []
-            }
-            
-            # Analyze the hot threads text
-            if isinstance(hot_threads, str):
-                lines = hot_threads.split('\n')
-                current_node = None
-                current_thread = None
-                current_cpu = 0
-                
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Detect node sections
-                    if 'Hot threads at' in line and 'node' in line:
-                        # Extract node name from line like "::: Hot threads at 2024-01-01T00:00:00.000Z, interval=500ms, busiestThreads=5, ignoreIdleThreads=true, type=cpu ::: [node-name][transport_address] hot_threads"
-                        try:
-                            current_node = line.split('[')[1].split(']')[0]
-                        except:
-                            current_node = "Unknown"
-                        continue
-                    
-                    # Detect thread information
-                    if '% of cpu usage' in line:
-                        try:
-                            current_cpu = float(line.split('%')[0].strip())
-                            # Extract thread name/type
-                            if 'elasticsearch' in line:
-                                thread_parts = line.split('elasticsearch[')[1].split(']')
-                                if len(thread_parts) > 1:
-                                    current_thread = thread_parts[1].strip().split()[0]
-                        except:
-                            current_cpu = 0
-                    
-                    # Categorize threads based on names and stack traces
-                    if current_thread and current_cpu > 0:
-                        thread_info = {
-                            'node': current_node,
-                            'thread': current_thread,
-                            'cpu': current_cpu,
-                            'stack_sample': line if 'at ' in line else ''
-                        }
-                        
-                        # Categorize by thread type and activity
-                        if current_cpu > 10:
-                            thread_analysis['cpu_intensive'].append(thread_info)
-                        
-                        if 'search' in current_thread.lower() or 'query' in line.lower():
-                            thread_analysis['search_threads'].append(thread_info)
-                        elif 'bulk' in current_thread.lower() or 'index' in current_thread.lower():
-                            thread_analysis['indexing_threads'].append(thread_info)
-                        elif 'gc' in line.lower() or 'garbage' in line.lower():
-                            thread_analysis['gc_threads'].append(thread_info)
-                        elif 'blocked' in line.lower() or 'waiting' in line.lower():
-                            thread_analysis['blocked_threads'].append(thread_info)
-            
-            # Generate summary tables for each category
-            categories = [
-                ('🔥 CPU Intensive Threads', 'cpu_intensive'),
-                ('🔍 Search-Related Threads', 'search_threads'),
-                ('📝 Indexing-Related Threads', 'indexing_threads'),
-                ('🗑️ Garbage Collection Threads', 'gc_threads'),
-                ('⏸️ Blocked Threads', 'blocked_threads')
-            ]
-            
-            total_hot_threads = 0
-            high_cpu_nodes = set()
-            
-            for category_name, category_key in categories:
-                threads = thread_analysis[category_key]
-                if threads:
-                    self.update_results(f"   {category_name}:\n")
-                    
-                    # Aggregate by node
-                    node_summary = {}
-                    for thread in threads:
-                        node = thread['node']
-                        if node not in node_summary:
-                            node_summary[node] = {
-                                'thread_count': 0,
-                                'total_cpu': 0,
-                                'max_cpu': 0,
-                                'thread_types': set()
-                            }
-                        
-                        node_summary[node]['thread_count'] += 1
-                        node_summary[node]['total_cpu'] += thread['cpu']
-                        node_summary[node]['max_cpu'] = max(node_summary[node]['max_cpu'], thread['cpu'])
-                        node_summary[node]['thread_types'].add(thread['thread'])
-                        
-                        total_hot_threads += 1
-                        if thread['cpu'] > 15:
-                            high_cpu_nodes.add(node)
-                    
-                    # Display node summary
-                    for node, summary in node_summary.items():
-                        avg_cpu = summary['total_cpu'] / summary['thread_count']
-                        thread_types = ', '.join(list(summary['thread_types'])[:3])  # Show up to 3 types
-                        
-                        self.update_results(f"      {node}: {summary['thread_count']} threads, "
-                                          f"avg {avg_cpu:.1f}% CPU (max {summary['max_cpu']:.1f}%), "
-                                          f"types: {thread_types}\n")
-                    
-                    self.update_results("\n")
-            
-            # Overall hot threads summary
+            if not isinstance(hot_threads_text, str) or "Hot threads" not in hot_threads_text:
+                self.update_results("   ✅ No significant hot threads detected - cluster performance is stable\n\n")
+                return
+
+            # Display Summary First
+            total_hot_threads = hot_threads_text.count('% of cpu usage')
             self.update_results("   Hot Threads Summary:\n")
             self.update_results(f"   📊 Total Hot Threads Detected: {total_hot_threads}\n")
-            
-            if high_cpu_nodes:
-                self.update_results(f"   📊 Nodes with High CPU Threads: {len(high_cpu_nodes)}\n")
-                for node in sorted(high_cpu_nodes):
-                    self.update_results(f"      • {node}\n")
-            
-            # Performance recommendations based on hot threads
-            if thread_analysis['cpu_intensive']:
-                self.update_results("   ⚠️  High CPU thread activity detected - monitor cluster load\n")
-            
-            if thread_analysis['search_threads']:
-                self.update_results("   ⚠️  Search-related hot threads - consider query optimization\n")
-            
-            if thread_analysis['indexing_threads']:
-                self.update_results("   ⚠️  Indexing-related hot threads - monitor bulk operation sizes\n")
-            
-            if thread_analysis['blocked_threads']:
-                self.update_results("   ⚠️  Blocked threads detected - check for resource contention\n")
-            
-            if thread_analysis['gc_threads']:
-                self.update_results("   ⚠️  GC-related hot threads - monitor heap usage and GC patterns\n")
-            
-            if not total_hot_threads:
-                self.update_results("   ✅ No significant hot threads detected - cluster performance is stable\n")
-                
+            if total_hot_threads > 0:
+                self.update_results("   ⚠️  High CPU thread activity detected. Review details below.\n")
+            else:
+                self.update_results("   ✅ No significant hot threads detected.\n")
             self.update_results("\n")
-            
+
+            # Display Raw Hot Threads Output for detailed analysis
+            self.update_results("   Raw Hot Threads Output:\n")
+            # Use a simple text block for readability in the report
+            self.update_results(f"<pre>\n{hot_threads_text}\n</pre>\n\n")
+
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve hot threads info: {str(e)}\n\n")
 
@@ -2232,43 +1767,20 @@ class ElasticsearchAnalyzer:
             table_rows = []
             total_tripped = 0
             
-            # Sort nodes by name for consistent ordering
-            sorted_node_ids = sorted(breaker_stats.get('nodes', {}).keys(),
-                                     key=lambda x: breaker_stats['nodes'][x].get('name', ''))
+            sorted_node_ids = sorted(breaker_stats.get('nodes', {}).keys(), key=lambda x: breaker_stats['nodes'][x].get('name', ''))
 
             for node_id in sorted_node_ids:
                 node_data = breaker_stats['nodes'][node_id]
-                node_name = node_data.get('name', 'Unknown')
                 breakers = node_data.get('breakers', {})
-                
                 for breaker_name, stats in breakers.items():
-                    limit_bytes = stats.get('limit_size_in_bytes', 0)
-                    estimated_bytes = stats.get('estimated_size_in_bytes', 0)
                     tripped_count = stats.get('tripped', 0)
-                    
-                    # Only show breakers with activity or non-zero limits
-                    if limit_bytes > 0 or estimated_bytes > 0 or tripped_count > 0:
-                        usage_percent = (estimated_bytes / limit_bytes * 100) if limit_bytes > 0 else 0
-                        
-                        table_rows.append([
-                            node_name,
-                            breaker_name,
-                            f"{limit_bytes / (1024**2):.1f}MB",
-                            f"{estimated_bytes / (1024**2):.1f}MB",
-                            f"{usage_percent:.1f}%{' ⚠️' if usage_percent > 90 else ''}",
-                            f"{tripped_count}{' 🔥' if tripped_count > 0 else ''}"
-                        ])
-                        
-                        total_tripped += tripped_count
+                    total_tripped += tripped_count
+                    limit_bytes = stats.get('limit_size_in_bytes', 0)
+                    if limit_bytes > 0 or stats.get('estimated_size_in_bytes', 0) > 0 or tripped_count > 0:
+                        usage = (stats.get('estimated_size_in_bytes', 0) / limit_bytes * 100) if limit_bytes > 0 else 0
+                        table_rows.append([node_data.get('name', 'Unknown'), breaker_name, f"{limit_bytes / 1024**2:.1f}MB", f"{stats.get('estimated_size_in_bytes', 0) / 1024**2:.1f}MB", f"{usage:.1f}%", str(tripped_count)])
 
-            if table_rows:
-                headers = ['Node', 'Breaker', 'Limit', 'Estimated', 'Usage', 'Tripped']
-                self.update_results(self._format_table(
-                    headers=headers,
-                    rows=table_rows,
-                    title="Circuit Breaker Status by Node"
-                ))
-            
+            # Display Summary First
             self.update_results("   Circuit Breaker Summary:\n")
             if total_tripped > 0:
                 self.update_results(f"   ⚠️🔥 Total Breaker Trips Detected: {total_tripped}\n")
@@ -2276,6 +1788,11 @@ class ElasticsearchAnalyzer:
             else:
                 self.update_results("   ✅ No circuit breaker trips detected. Memory management is stable.\n")
             self.update_results("\n")
+            
+            # Display Details
+            if table_rows:
+                headers = ['Node', 'Breaker', 'Limit', 'Estimated', 'Usage %', 'Tripped']
+                self.update_results(self._format_table(headers=headers, rows=table_rows, title="Circuit Breaker Status by Node"))
 
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve circuit breaker info: {str(e)}\n\n")
@@ -2286,39 +1803,28 @@ class ElasticsearchAnalyzer:
         try:
             transport_stats = self.es.nodes.stats(metric=['transport'])
             network_table_rows = []
-            
-            for node_id, node_data in transport_stats.get('nodes', {}).items():
-                node_name = node_data.get('name', 'Unknown')
-                transport = node_data.get('transport', {})
-                
-                rx_count = transport.get('rx_count', 0)
-                tx_count = transport.get('tx_count', 0)
-                rx_size_mb = transport.get('rx_size_in_bytes', 0) / (1024 * 1024)
-                tx_size_mb = transport.get('tx_size_in_bytes', 0) / (1024 * 1024)
-                server_open = transport.get('server_open', 0)
-                
-                network_table_rows.append([
-                    node_name,
-                    f"{rx_count:,}",
-                    f"{tx_count:,}",
-                    f"{rx_size_mb:.1f}MB",
-                    f"{tx_size_mb:.1f}MB",
-                    str(server_open)
-                ])
+            total_rx_mb, total_tx_mb = 0, 0
 
-            network_headers = ['Node', 'RX Count', 'TX Count', 'RX Data', 'TX Data', 'Connections']
-            self.update_results(self._format_table(
-                headers=network_headers,
-                rows=network_table_rows,
-                title="Network Transport Performance"
-            ))
+            for node_id, node_data in transport_stats.get('nodes', {}).items():
+                transport = node_data.get('transport', {})
+                rx_mb = transport.get('rx_size_in_bytes', 0) / 1024**2
+                tx_mb = transport.get('tx_size_in_bytes', 0) / 1024**2
+                total_rx_mb += rx_mb
+                total_tx_mb += tx_mb
+                network_table_rows.append([
+                    node_data.get('name', 'Unknown'),
+                    f"{transport.get('rx_count', 0):,}", f"{transport.get('tx_count', 0):,}",
+                    f"{rx_mb:.1f}MB", f"{tx_mb:.1f}MB", str(transport.get('server_open', 0))
+                ])
             
-            # Summary
-            total_rx_mb = sum(float(row[3][:-2]) for row in network_table_rows if row[3] != "N/A")
-            total_tx_mb = sum(float(row[4][:-2]) for row in network_table_rows if row[4] != "N/A")
+            # Display Summary First
             self.update_results("   Network Summary:\n")
             self.update_results(f"   📊 Total Data Received (RX): {total_rx_mb:.1f}MB\n")
             self.update_results(f"   📊 Total Data Sent (TX): {total_tx_mb:.1f}MB\n\n")
+
+            # Display Details
+            network_headers = ['Node', 'RX Count', 'TX Count', 'RX Data', 'TX Data', 'Connections']
+            self.update_results(self._format_table(headers=network_headers, rows=network_table_rows, title="Network Transport Performance"))
 
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve network traffic info: {str(e)}\n\n")
