@@ -1037,9 +1037,10 @@ class ElasticsearchAnalyzer:
         self.update_results("🔧 SEGMENTS & ALLOCATION ANALYSIS:\n\n")
         try:
             segments_stats = self.es.indices.segments()
-            allocation_info = self.es.cat.allocation(h='node,shards,disk.percent', format='json')
-            
-            segment_table_rows, allocation_table_rows, warnings = [], [], []
+            # Fetch all allocation data once with all required fields
+            allocation_data = self.es.cat.allocation(format='json', h='node,shards,disk.used,disk.avail,disk.percent')
+
+            segment_table_rows, warnings = [], []
             total_segments, total_segment_memory, total_shards = 0, 0, 0
 
             for index_name, index_data in segments_stats.get('indices', {}).items():
@@ -1050,7 +1051,7 @@ class ElasticsearchAnalyzer:
                             index_segments += 1
                             index_memory_bytes += seg_info.get('memory_in_bytes', 0)
                             max_segment_size = max(max_segment_size, seg_info.get('size_in_bytes', 0))
-                
+
                 if index_segments > 0:
                     segment_table_rows.append([index_name[:25], str(index_segments), f"{index_memory_bytes / 1024**2:.1f}MB", f"{max_segment_size / 1024**2:.1f}MB"])
                     total_segments += index_segments
@@ -1058,12 +1059,19 @@ class ElasticsearchAnalyzer:
                     if index_segments > 100: warnings.append(f"   ⚠️  High segment count in {index_name[:20]}: {index_segments}")
                     if max_segment_size > 5 * 1024**3: warnings.append(f"   ⚠️  Large segment (>5GB) in {index_name[:20]}")
 
-            for node_data in allocation_info:
-                shards_count = int(node_data.get('shards', 0))
-                total_shards += shards_count
-                if shards_count > 1000: warnings.append(f"   ⚠️  High shard count on {node_data.get('node', 'Unknown')}: {shards_count}")
-                if float(node_data.get('disk.percent', 0)) > 85: warnings.append(f"   ⚠️  High disk usage on {node_data.get('node', 'Unknown')}")
-            
+            # Use the fetched allocation_data for warnings and totals
+            for node_data in allocation_data:
+                try:
+                    shards_count = int(node_data.get('shards', '0') or '0')
+                    total_shards += shards_count
+                    if shards_count > 1000: warnings.append(f"   ⚠️  High shard count on {node_data.get('node', 'Unknown')}: {shards_count}")
+                    
+                    disk_percent = float(node_data.get('disk.percent', '0') or '0')
+                    if disk_percent > 85:
+                        warnings.append(f"   ⚠️  High disk usage on {node_data.get('node', 'Unknown')}")
+                except (ValueError, TypeError):
+                    pass # Ignore nodes with non-numeric shard or disk info
+
             # Display Summary First
             num_indices = len(segment_table_rows)
             avg_segments = total_segments / num_indices if num_indices > 0 else 0
@@ -1082,7 +1090,22 @@ class ElasticsearchAnalyzer:
                 self.update_results("\n")
 
             if segment_table_rows: self.update_results(self._format_table(headers=['Index', 'Segments', 'Memory Usage', 'Largest Segment'], rows=sorted(segment_table_rows, key=lambda x: int(x[1]), reverse=True)[:20], title="Segment Analysis (Top 20 by Count)"))
-            self.update_results(self._format_table(headers=['Node', 'Shards', 'Disk Used', 'Disk Available', 'Usage %'], rows=self.es.cat.allocation(format='json', h='node,shards,disk.used,disk.avail,disk.percent'), title="Shard Allocation by Node"))
+            
+            # Prepare rows for the allocation table correctly from the fetched data
+            allocation_rows = [
+                [
+                    d.get('node', 'N/A'),
+                    d.get('shards', 'N/A'),
+                    d.get('disk.used', 'N/A'),
+                    d.get('disk.avail', 'N/A'),
+                    f"{d.get('disk.percent', 'N/A')}%"
+                ] for d in allocation_data
+            ]
+            self.update_results(self._format_table(
+                headers=['Node', 'Shards', 'Disk Used', 'Disk Available', 'Usage %'],
+                rows=allocation_rows,
+                title="Shard Allocation by Node"
+            ))
 
         except Exception as e:
             self.update_results(f"   ⚠️  Could not retrieve segments/allocation info: {str(e)}\n\n")
