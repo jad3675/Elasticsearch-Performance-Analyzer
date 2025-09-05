@@ -496,9 +496,26 @@ class ElasticsearchAnalyzer:
                 nodes_info_api = self.es.nodes.info()
                 cat_nodes = self.es.cat.nodes(h='name,cpu,load_1m,processors,heap.max,ram.max', format='json')
                 
+                # Create a mapping of node names to their roles
+                node_roles_map = {}
+                for node_id, node_data in nodes_info_api.get('nodes', {}).items():
+                    node_name = node_data.get('name')
+                    roles = node_data.get('roles', [])
+                    if node_name:
+                        # Abbreviate roles for concise table display
+                        role_abbreviations = {
+                            'master': 'm', 'data': 'd', 'data_content': 'dc',
+                            'data_hot': 'dh', 'data_warm': 'dw', 'data_cold': 'dco',
+                            'data_frozen': 'df', 'ingest': 'i', 'ml': 'ml',
+                            'remote_cluster_client': 'r', 'transform': 't'
+                        }
+                        abbreviated_roles = [role_abbreviations.get(r, r) for r in roles]
+                        node_roles_map[node_name] = ', '.join(sorted(abbreviated_roles))
+
                 # Process nodes and collect data
                 for node in cat_nodes:
                     node_name = node.get('name', 'Unknown')
+                    roles_str = node_roles_map.get(node_name, 'N/A')
                     processors = node.get('processors', 'N/A')
                     heap_max = node.get('heap.max', 'N/A')
                     ram_max = node.get('ram.max', 'N/A')
@@ -537,6 +554,7 @@ class ElasticsearchAnalyzer:
                     # Add row to table data
                     table_rows.append([
                         node_name,
+                        roles_str,
                         f"{cpu_count} vCPUs",
                         heap_max,
                         ram_max,
@@ -545,7 +563,7 @@ class ElasticsearchAnalyzer:
                     ])
                 
                 # Display the node resources table
-                headers = ['Node Name', 'CPUs', 'Heap Size', 'RAM', 'CPU Usage', 'Load']
+                headers = ['Node Name', 'Roles', 'CPUs', 'Heap Size', 'RAM', 'CPU Usage', 'Load']
                 self.update_results(self._format_table(
                     headers=headers,
                     rows=sorted(table_rows, key=lambda x: x[0]),  # Sort by node name
