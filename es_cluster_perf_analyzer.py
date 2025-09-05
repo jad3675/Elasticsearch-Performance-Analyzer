@@ -22,18 +22,42 @@ class ElasticsearchAnalyzer:
         self.root.geometry("800x700")
         
         # Variables
-        self.cloud_id = tk.StringVar()
-        self.api_key = tk.StringVar()
+        self.connection_type = tk.StringVar(value="cloud_id")
+        self.auth_type = tk.StringVar(value="api_key")
+        self.cloud_id_var = tk.StringVar()
+        self.url_var = tk.StringVar()
+        self.api_key_var = tk.StringVar()
+        self.username_var = tk.StringVar()
+        self.password_var = tk.StringVar()
+        self.verify_ssl_var = tk.BooleanVar(value=True)
         self.es = None
         
         # Check if elasticsearch library is available
         if not ES_AVAILABLE:
-            messagebox.showerror("Missing Dependency", 
+            messagebox.showerror("Missing Dependency",
                                "Please install the elasticsearch library:\npip install elasticsearch")
             self.root.destroy()
             return
             
         self.setup_ui()
+
+    def toggle_connection_fields(self):
+        """Toggle visibility of connection fields based on connection type."""
+        if self.connection_type.get() == "cloud_id":
+            self.cloud_frame.grid()
+            self.url_frame.grid_remove()
+        else:
+            self.cloud_frame.grid_remove()
+            self.url_frame.grid()
+
+    def toggle_auth_fields(self):
+        """Toggle visibility of authentication fields based on auth type."""
+        if self.auth_type.get() == "api_key":
+            self.api_key_frame.grid()
+            self.basic_auth_frame.grid_remove()
+        else:
+            self.api_key_frame.grid_remove()
+            self.basic_auth_frame.grid()
     
     def setup_ui(self):
         # Main frame
@@ -44,24 +68,88 @@ class ElasticsearchAnalyzer:
         conn_frame = ttk.LabelFrame(main_frame, text="Elasticsearch Connection", padding="10")
         conn_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        ttk.Label(conn_frame, text="Cloud ID:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        cloud_id_entry = ttk.Entry(conn_frame, textvariable=self.cloud_id, width=60)
-        cloud_id_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=(10, 0))
+        # Connection Type Selection
+        ttk.Label(conn_frame, text="Connection Type:").grid(row=0, column=0, sticky=tk.W)
         
-        ttk.Label(conn_frame, text="API Key:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        api_key_entry = ttk.Entry(conn_frame, textvariable=self.api_key, width=60, show="*")
-        api_key_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2, padx=(10, 0))
+        ttk.Radiobutton(
+            conn_frame, text="Cloud ID", variable=self.connection_type,
+            value="cloud_id", command=self.toggle_connection_fields
+        ).grid(row=0, column=1, sticky=tk.W)
         
-        # Help text for API key formats
-        help_text = ttk.Label(conn_frame, text="Supports: base64-encoded OR beats format (id:api_key)", 
-                             foreground="gray", font=("TkDefaultFont", 8))
-        help_text.grid(row=2, column=1, sticky=tk.W, padx=(10, 0))
+        ttk.Radiobutton(
+            conn_frame, text="URL", variable=self.connection_type,
+            value="url", command=self.toggle_connection_fields
+        ).grid(row=0, column=2, sticky=tk.W)
+        
+        # Cloud ID Frame
+        self.cloud_frame = ttk.Frame(conn_frame)
+        self.cloud_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        self.cloud_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.cloud_frame, text="Cloud ID:").grid(row=0, column=0, sticky=tk.W)
+        self.cloud_id_entry = ttk.Entry(self.cloud_frame, textvariable=self.cloud_id_var, width=60)
+        self.cloud_id_entry.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # URL Frame
+        self.url_frame = ttk.Frame(conn_frame)
+        self.url_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        self.url_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.url_frame, text="URL:").grid(row=0, column=0, sticky=tk.W)
+        self.url_entry = ttk.Entry(self.url_frame, textvariable=self.url_var, width=60)
+        self.url_entry.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Authentication Frame
+        auth_frame = ttk.LabelFrame(conn_frame, text="Authentication", padding="5")
+        auth_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        
+        ttk.Label(auth_frame, text="Auth Type:").grid(row=0, column=0, sticky=tk.W)
+        
+        ttk.Radiobutton(
+            auth_frame, text="API Key", variable=self.auth_type,
+            value="api_key", command=self.toggle_auth_fields
+        ).grid(row=0, column=1, sticky=tk.W)
+        
+        ttk.Radiobutton(
+            auth_frame, text="Basic Auth", variable=self.auth_type,
+            value="basic", command=self.toggle_auth_fields
+        ).grid(row=0, column=2, sticky=tk.W)
+        
+        # API Key Frame
+        self.api_key_frame = ttk.Frame(auth_frame)
+        self.api_key_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        self.api_key_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.api_key_frame, text="API Key:").grid(row=0, column=0, sticky=tk.W)
+        self.api_key_entry = ttk.Entry(self.api_key_frame, textvariable=self.api_key_var, width=60, show="*")
+        self.api_key_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        help_label = ttk.Label(self.api_key_frame, text="Format: encoded_key OR key_id:key_secret",
+                                 font=("TkDefaultFont", 8), foreground="gray")
+        help_label.grid(row=1, column=1, sticky=tk.W, padx=5)
+        
+        # Basic Auth Frame
+        self.basic_auth_frame = ttk.Frame(auth_frame)
+        self.basic_auth_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        self.basic_auth_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.basic_auth_frame, text="Username:").grid(row=0, column=0, sticky=tk.W)
+        self.username_entry = ttk.Entry(self.basic_auth_frame, textvariable=self.username_var, width=60)
+        self.username_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Label(self.basic_auth_frame, text="Password:").grid(row=1, column=0, sticky=tk.W)
+        self.password_entry = ttk.Entry(self.basic_auth_frame, textvariable=self.password_var, width=60, show="*")
+        self.password_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+
+        # SSL Verification
+        ttk.Checkbutton(
+            conn_frame, text="Verify SSL Certificate", variable=self.verify_ssl_var
+        ).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
         
         # Buttons frame
         btn_frame = ttk.Frame(main_frame)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=10)
         
-        ttk.Button(btn_frame, text="Connect & Analyze", command=self.analyze_cluster).pack(side=tk.LEFT, padx=5)
+        connect_btn = ttk.Button(btn_frame, text="Connect & Analyze", command=self.analyze_cluster)
+        connect_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Initial visibility setup
+        self.toggle_connection_fields()
+        self.toggle_auth_fields()
         ttk.Button(btn_frame, text="Clear Results", command=self.clear_results).pack(side=tk.LEFT, padx=5)
         self.browser_btn = ttk.Button(btn_frame, text="Open in Browser", command=self.open_in_browser, state=tk.DISABLED)
         self.browser_btn.pack(side=tk.LEFT, padx=5)
@@ -82,7 +170,6 @@ class ElasticsearchAnalyzer:
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(2, weight=1)
-        conn_frame.columnconfigure(1, weight=1)
         results_frame.columnconfigure(0, weight=1)
         results_frame.rowconfigure(0, weight=1)
     
@@ -119,25 +206,6 @@ class ElasticsearchAnalyzer:
         
         return "\n".join(output) + "\n\n"
 
-    def process_api_key(self, api_key):
-        """Process API key - handle both encoded and beats-style (id:key) formats"""
-        try:
-            # Check if it's beats-style format (contains colon)
-            if ':' in api_key:
-                # Beats format: id:api_key -> base64(id:api_key)
-                encoded = base64.b64encode(api_key.encode('utf-8')).decode('utf-8')
-                return encoded
-            else:
-                # Assume it's already base64 encoded
-                # Validate by trying to decode it
-                try:
-                    base64.b64decode(api_key)
-                    return api_key
-                except:
-                    raise ValueError("API key appears to be neither beats format (id:key) nor valid base64 encoded")
-        except Exception as e:
-            raise ValueError(f"Failed to process API key: {str(e)}")
-    
     def _parse_size_to_gb(self, size_str):
         """Parse size string (like '8gb', '2048mb') to GB"""
         try:
@@ -159,24 +227,43 @@ class ElasticsearchAnalyzer:
     def setup_connection(self):
         """Setup Elasticsearch connection using official client"""
         try:
-            cloud_id = self.cloud_id.get().strip()
-            api_key_raw = self.api_key.get().strip()
-            
-            if not cloud_id or not api_key_raw:
-                raise ValueError("Please provide both Cloud ID and API Key")
-            
-            # Process the API key
-            api_key_processed = self.process_api_key(api_key_raw)
+            es_kwargs = {
+                'verify_certs': self.verify_ssl_var.get(),
+                'request_timeout': 30,
+                'retry_on_timeout': True,
+                'max_retries': 3
+            }
+
+            # Add connection details
+            if self.connection_type.get() == "cloud_id":
+                cloud_id = self.cloud_id_var.get().strip()
+                if not cloud_id: raise ValueError("Cloud ID is required")
+                es_kwargs['cloud_id'] = cloud_id
+            else:
+                url = self.url_var.get().strip()
+                if not url: raise ValueError("URL is required")
+                es_kwargs['hosts'] = [url]
+
+            # Add authentication details
+            if self.auth_type.get() == "api_key":
+                api_key_str = self.api_key_var.get().strip()
+                if not api_key_str: raise ValueError("API Key is required")
+                if ':' in api_key_str:
+                    es_kwargs['api_key'] = tuple(api_key_str.split(':', 1))
+                else:
+                    es_kwargs['api_key'] = api_key_str # Assumes base64 encoded
+            else:
+                username = self.username_var.get().strip()
+                password = self.password_var.get().strip()
+                if not username: raise ValueError("Username is required")
+                es_kwargs['basic_auth'] = (username, password)
             
             # Create Elasticsearch client
-            self.es = Elasticsearch(
-                cloud_id=cloud_id,
-                api_key=api_key_processed,
-                request_timeout=30,
-                retry_on_timeout=True,
-                max_retries=3
-            )
+            self.es = Elasticsearch(**es_kwargs)
             
+            if not self.es.ping():
+                raise ConnectionError("Failed to connect to Elasticsearch. Please check credentials and network.")
+
             return True
             
         except Exception as e:
@@ -185,10 +272,6 @@ class ElasticsearchAnalyzer:
     
     def analyze_cluster(self):
         """Main analysis function"""
-        if not self.cloud_id.get() or not self.api_key.get():
-            messagebox.showerror("Input Error", "Please provide both Cloud ID and API Key")
-            return
-        
         # Run analysis in separate thread to prevent UI blocking
         threading.Thread(target=self._run_analysis, daemon=True).start()
     
