@@ -17,14 +17,20 @@ A comprehensive Python application for analyzing Elasticsearch cluster performan
 - **Network Traffic**: Transport layer metrics and connection monitoring
 - **Index Operations**: Indexing, refresh, merge, and flush performance analysis
 - **Segments & Allocation**: Segment count, memory usage, and shard distribution
-- **Hot Threads**: CPU bottleneck detection and performance analysis
+- **Hot Threads**: CPU bottleneck detection and performance analysis with interactive stack trace drilling
 - **Real-time Activity**: Live indexing delta monitoring
 
 ### Multiple Output Formats
 
 - **Interactive GUI**: Real-time analysis with scrollable results
-- **HTML Reports**: Professional, tabbed reports that open in your browser
-- **JSON Export**: Machine-readable data export for further processing
+- **HTML Reports**: Professional, tabbed reports with interactive features:
+  - Collapsible hot threads analysis with stack trace drilling
+  - Responsive design for mobile/desktop viewing
+  - JavaScript-enhanced user interactions
+- **Structured JSON Export**: Machine-readable data with organized sections for:
+  - Programmatic analysis and integration
+  - Custom reporting and visualization
+  - Data pipeline integration
 
 ### Flexible Connectivity
 
@@ -77,6 +83,12 @@ python es_cluster_perf_analyzer.py \
   --password "your-password" \
   --run
 
+# Export directly to JSON file
+python es_cluster_perf_analyzer.py \
+  --cloud-id "your-cloud-id" \
+  --api-key "your-api-key" \
+  --export-json "/path/to/analysis-report.json"
+
 # Disable SSL verification if needed
 python es_cluster_perf_analyzer.py \
   --url "https://localhost:9200" \
@@ -97,6 +109,7 @@ python es_cluster_perf_analyzer.py \
 | `--password` | Password for basic authentication |
 | `--no-ssl-verify` | Disable SSL certificate verification |
 | `--run` | Auto-run analysis and open browser report |
+| `--export-json FILEPATH` | Export analysis results to specified JSON file and exit |
 
 ## Configuration Examples
 
@@ -129,6 +142,16 @@ python es_cluster_perf_analyzer.py \
   --run
 ```
 
+### Automated JSON Export
+
+```bash
+# Export analysis directly to JSON for automation/CI pipelines
+python es_cluster_perf_analyzer.py \
+  --cloud-id "deployment-name:dXMtY2VudHJhbDEuZ2NwLmNsb3VkLmVzLmlvJGNlNTg2..." \
+  --api-key "VnVhQ2ZHY0JDZGJrU..." \
+  --export-json "./reports/cluster-analysis-$(date +%Y%m%d).json"
+```
+
 ## Analysis Output
 
 ### Key Metrics Tracked
@@ -150,23 +173,35 @@ python es_cluster_perf_analyzer.py \
 **Health Indicators**:
 - Circuit breaker status
 - Unassigned shards
-- Hot thread detection
+- Hot thread detection with detailed stack traces
 - Pipeline failure rates
 - Node connectivity
 
 ### Report Features
 
 **HTML Reports**:
-- Tabbed interface for easy navigation
+- Tabbed interface for easy navigation between analysis sections
 - Responsive design for mobile/desktop viewing
 - Color-coded metrics (green/yellow/red status indicators)
-- Interactive tables with sorting capabilities
+- Interactive elements:
+  - Collapsible hot threads analysis with stack trace drilling
+  - JavaScript-enhanced navigation and content toggling
 - Professional styling suitable for stakeholder presentations
+
+**Structured JSON Export**:
+- Organized data sections matching HTML report structure
+- Summary metrics and detailed breakdowns for each analysis area
+- Machine-readable format for:
+  - Integration with monitoring systems
+  - Custom dashboard creation
+  - Automated analysis workflows
+  - Data pipeline consumption
 
 **Real-time Monitoring**:
 - 10-second delta checks for live indexing activity
-- Current thread pool status
-- Active operations monitoring
+- Current thread pool status monitoring
+- Active operations tracking
+- Console output for CLI operations
 
 ## Troubleshooting
 
@@ -204,6 +239,7 @@ python es_cluster_perf_analyzer.py --no-ssl-verify --url "https://localhost:9200
 - Uses multiple API calls to gather comprehensive metrics
 - Implements connection pooling and timeout handling
 - Thread-safe GUI updates prevent interface freezing
+- Structured data storage enables efficient JSON export
 
 ## Security Notes
 
