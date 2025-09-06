@@ -8,6 +8,7 @@ import os
 import datetime
 import time
 import json
+import argparse
 
 try:
     from elasticsearch import Elasticsearch
@@ -16,10 +17,11 @@ except ImportError:
     ES_AVAILABLE = False
 
 class ElasticsearchAnalyzer:
-    def __init__(self, root):
+    def __init__(self, root, cli_args=None):
         self.root = root
         self.root.title("Elasticsearch Cluster Resource Analyzer")
         self.root.geometry("800x700")
+        self.cli_args = cli_args
         
         # Variables
         self.connection_type = tk.StringVar(value="cloud_id")
@@ -32,6 +34,26 @@ class ElasticsearchAnalyzer:
         self.verify_ssl_var = tk.BooleanVar(value=True)
         self.es = None
         
+        # Populate vars from CLI args if provided
+        if self.cli_args:
+            if self.cli_args.cloud_id:
+                self.connection_type.set("cloud_id")
+                self.cloud_id_var.set(self.cli_args.cloud_id)
+            elif self.cli_args.url:
+                self.connection_type.set("url")
+                self.url_var.set(self.cli_args.url)
+
+            if self.cli_args.api_key:
+                self.auth_type.set("api_key")
+                self.api_key_var.set(self.cli_args.api_key)
+            elif self.cli_args.user and self.cli_args.password:
+                self.auth_type.set("basic")
+                self.username_var.set(self.cli_args.user)
+                self.password_var.set(self.cli_args.password)
+
+            if self.cli_args.no_ssl_verify:
+                self.verify_ssl_var.set(False)
+        
         # Check if elasticsearch library is available
         if not ES_AVAILABLE:
             messagebox.showerror("Missing Dependency",
@@ -40,6 +62,12 @@ class ElasticsearchAnalyzer:
             return
             
         self.setup_ui()
+
+        # Auto-run analysis if specified by CLI arg
+        if self.cli_args and self.cli_args.run:
+            # Hide the main window for a cleaner CLI experience
+            self.root.withdraw()
+            self.root.after(100, self.analyze_cluster)
 
     def toggle_connection_fields(self):
         """Toggle visibility of connection fields based on connection type."""
@@ -627,6 +655,13 @@ class ElasticsearchAnalyzer:
             self.update_results(f"   Total Analyzed Sections: 5\n")
             self.update_results("   Analysis Status: Complete\n\n")
             
+            # If running from CLI, open browser and exit
+            if self.cli_args and self.cli_args.run:
+                self.update_results("   Analysis complete. Opening report in browser...\n")
+                self.open_in_browser()
+                # Schedule closing the app after a delay to ensure browser opens
+                self.root.after(3000, self.root.destroy)
+
         except Exception as e:
             error_msg = str(e)
             self.update_results(f"❌ Error during analysis: {error_msg}\n")
@@ -1853,8 +1888,36 @@ class ElasticsearchAnalyzer:
             self.update_results(f"   ⚠️  Could not retrieve network traffic info: {str(e)}\n\n")
 
 def main():
+    parser = argparse.ArgumentParser(description="Elasticsearch Cluster Analyzer. Run with no arguments for GUI mode.")
+    # Connection args
+    conn_group = parser.add_mutually_exclusive_group()
+    conn_group.add_argument("--cloud-id", help="Elasticsearch Cloud ID")
+    conn_group.add_argument("--url", help="Elasticsearch cluster URL (e.g., https://localhost:9200)")
+    
+    # Auth args
+    auth_group = parser.add_mutually_exclusive_group()
+    auth_group.add_argument("--api-key", help="API Key for authentication (format: 'id:key' or base64 encoded string)")
+    auth_group.add_argument("--user", help="Username for basic authentication")
+    
+    parser.add_argument("--password", help="Password for basic authentication (required with --user)")
+    parser.add_argument("--no-ssl-verify", action="store_true", help="Disable SSL certificate verification")
+    parser.add_argument("--run", action="store_true", help="Automatically run analysis, open report in browser, and exit. Requires connection and auth args.")
+    
+    args = parser.parse_args()
+    
+    # Validate args for CLI run
+    if args.run:
+        if not (args.cloud_id or args.url):
+            parser.error("Connection details (--cloud-id or --url) are required with --run.")
+        if not (args.api_key or (args.user and args.password)):
+             parser.error("Authentication details (--api-key or --user/--password) are required with --run.")
+        if args.user and not args.password:
+            parser.error("--password is required when --user is provided.")
+
     root = tk.Tk()
-    app = ElasticsearchAnalyzer(root)
+    app = ElasticsearchAnalyzer(root, cli_args=args)
+    
+    # The mainloop will run. If in CLI mode, the app will auto-run and then destroy the root window.
     root.mainloop()
 
 if __name__ == "__main__":
